@@ -101,3 +101,39 @@ def test_trendlyne_overlay_wins_both_orders(env):
     fundamentals.run(store=store, log=LOG, fetch=fake)  # next Yahoo refresh keeps Trendlyne's fields
     assert store.get("fundamentals", "ALPHA")["pledge"] == 25.5
     assert store.get("control", "fundamentals_upload")["file"].startswith("trendlyne")
+
+
+def test_trendlyne_data_downloader_xlsx():
+    import io
+
+    from mb.fundamentals import parse
+    from mb.rules import pass1
+    cols = ["Stock Name", "NSE Code", "BSE Code", "Stock Code", "ISIN", "Industry Name", "sector_name", "Current Price",
+            "Market Capitalization", "Market Capitalization", "PE TTM", "ROCE Annual %", "ROCE Annual 3Yr Avg %",
+            "Revenue Annual 3Yr Growth %", "Net Profit 3Yr Growth %", "Revenue Growth Qtr YoY %",
+            "Cash from Operating Activity Annual", "Operating Cash Flow 3Yr Growth %", "EBITDA Annual",
+            "Net Profit Annual", "Operating Revenue Annual", "Total Debt Annual", "Cash Plus Cash Equivalents Annual",
+            "Total Debt to Total Equity Annual", "Total ShareHolders Funds Annual",
+            "Contingent Liabilities plus Commitments Annual", "Capital Work In Progress Annual",
+            "Trade Receivables Annual", "Inventory Turnover Ratio Annual", "Number Of Shares Qtr End",
+            "Month Volume Avg", "Promoter holding latest %", "Promoter holding change 4Qtr %",
+            "Promoter holding pledge percentage % Qtr", "Promoter pledge change QoQ %"]
+    row = ["Alpha Precision Ltd.", "ALPHA", 500001, "A1", "INE000A01011", "Auto Parts", "Auto", 510.5, 3200, 3200, 24,
+           21, 19.5, 22, 28, 30, 6, 150, 18, 1000, 900, 100, 50, 0.14, 700, 40, 30, 160, 8, 6.3, 200000, 58, 0.5, 6,
+           2]
+    buf = io.BytesIO()
+    pd.DataFrame([row], columns=cols).to_excel(buf, index=False)
+    recs, rep = parse(buf.getvalue(), "trendlyne.xlsx")
+    a = recs["ALPHA"]
+    assert a["pe"] == 24 and a["roce"] == 21 and a["roce_3y_avg"] == 19.5 and a["sales_cagr_3y"] == 22
+    assert a["debtor_days"] == pytest.approx(64.9) and a["inventory_days"] == pytest.approx(45.6)
+    assert a["pledge"] == 6 and a["pledge_prev"] == 4 and a["promoter"] == 58 and a["promoter_change"] == 0.5
+    assert a["debt"] == 100 and a["net_worth"] == 700 and a["mcap"] == 3200
+    assert "receivables" not in a and "cfo_3y" not in a  # annual CFO is not a 3-year sum, so it isn't mapped
+    assert "revenue_annual" not in rep["recognised"] and "pledge" in rep["recognised"]
+    assert pass1(a)["known"] >= 4
+    # A title row above the header (some exports) is skipped.
+    buf2 = io.BytesIO()
+    pd.DataFrame([["Trendlyne Data Downloader"] + [None] * 2, ["NSE Code", "Stock Name", "PE TTM"], ["BETA", "Beta", 12]]
+                 ).to_excel(buf2, index=False, header=False)
+    assert parse(buf2.getvalue(), "t.xlsx")[0]["BETA"]["pe"] == 12
