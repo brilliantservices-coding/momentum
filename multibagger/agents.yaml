@@ -10,14 +10,14 @@ agents:
   - id: ingestion
     name: Ingestion agent
     description: Loads announcement CSVs you upload on the Data page into the filings table and runs the red-flag keyword checks on them. Runs right after each upload; the daily run picks up anything missed.
-    schedule: "30 19 * * 1-5"    # weekdays 19:30, after market close
-    cadence: daily
+    schedule: "30 19 * * 1,4"    # Mon and Thu 19:30, after the desktop download
+    cadence: twice weekly
     phase: 1
   - id: forensic
     name: Forensic agent
     description: Runs the red-flag checklist on structured fundamentals and new filings. Hard flags raise alerts within a day.
-    schedule: "0 20 * * 1-5"     # weekdays 20:00
-    cadence: daily
+    schedule: "0 20 * * 1,4"     # Mon and Thu 20:00
+    cadence: twice weekly
     phase: 1
   - id: screener
     name: Screener agent
