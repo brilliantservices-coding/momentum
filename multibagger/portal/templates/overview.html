@@ -10,13 +10,17 @@
 <div class="l">{{cost.currency}} spent of {{ "%.0f"|format(cost.budget) }} this month</div>
 {% if cost.pct is not none %}<div class="bar"><i class="{{'bad' if cost.pct>=90 else 'warn' if cost.pct>=50 else ''}}" style="width:{{ [cost.pct,100]|min }}%"></i></div>{% endif %}</a>
 </div>
-{% if not fundamentals %}<div class="banner" style="margin-top:16px">No fundamentals loaded yet. The screener and the structured red-flag checks need a Screener-style export: <a href="/data">upload one on the Data page</a>.</div>{% endif %}
+<h2>Data</h2>
+{% include "_freshness.html" %}
+<h2>Funnel</h2>
+<div class="card"><div class="meta" style="flex-wrap:wrap">{% for st in stages %}<span><strong style="color:var(--ink)">{{ '{:,}'.format(st.n) }}</strong> {{st.name}}</span>{{ '<span>→</span>'|safe if not loop.last }}{% endfor %}</div>
+<p class="small" style="margin:6px 0 0"><a href="/funnel">See every company, the factors for and against it, and where it stopped →</a></p></div>
 <h2>Agents</h2>
 <div class="agents">{% for a in agents %}<div class="card agent">
 <h3><a href="/agents/{{a.id}}" style="color:inherit">{{a.name}}</a></h3><p>{{a.description}}</p>
 <div class="meta"><span class="pill {{'on' if a.enabled else 'off'}}">{{'scheduled' if a.enabled else 'paused'}}</span>
 <span>{{a.cadence}} · <code>{{a.schedule}}</code></span>
-{% if a.last_status %}<span class="pill {{a.last_status}}">{{a.last_status}}</span><span>{{(a.last_finished or a.last_started or '')[:16].replace('T',' ')}} UTC</span>{% else %}<span>never run</span>{% endif %}</div>
+{% if a.last_status %}<span class="pill {{a.last_status}}">{{a.last_status}}</span><span>{{(a.last_finished or a.last_started)|ist}}</span>{% else %}<span>never run</span>{% endif %}</div>
 <div class="row">
 <form method="post" action="/agents/{{a.id}}/run"><button class="primary">Run now</button></form>
 <form method="post" action="/agents/{{a.id}}/stop"><button>Stop</button></form>

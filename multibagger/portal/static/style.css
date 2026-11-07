@@ -37,3 +37,10 @@ details summary{cursor:pointer;color:var(--accent)}pre{white-space:pre-wrap;font
 input[type=text],input[type=file],textarea{font:inherit;font-size:13px;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--ink)}
 .empty{padding:28px;text-align:center;color:var(--muted)}.small{font-size:12.5px;color:var(--muted)}
 .flash{padding:10px 14px;border-radius:10px;background:var(--chip);margin-bottom:16px}
+.grid.fresh{grid-template-columns:repeat(auto-fit,minmax(280px,1fr));margin-bottom:8px}
+.funnel .fstep{display:grid;grid-template-columns:minmax(150px,280px) 1fr 70px;gap:10px;align-items:center;padding:5px 4px;color:inherit;text-decoration:none;border-radius:6px}
+.funnel a.fstep[href]:hover,.funnel .fstep.on{background:var(--chip)}
+.funnel .flabel{font-size:13px}.funnel .fbar{height:12px;background:var(--chip);border-radius:6px;overflow:hidden}
+.funnel .fbar i{display:block;height:100%;background:var(--accent)}
+.split{display:flex;height:8px;border-radius:4px;overflow:hidden;background:var(--chip)}.split .g{background:var(--good)}.split .r{background:var(--bad)}
+@media (max-width:600px){.funnel .fstep{grid-template-columns:1fr 60px}.funnel .fbar{grid-column:1/-1;grid-row:2}}

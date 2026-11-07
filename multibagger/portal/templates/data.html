@@ -1,9 +1,10 @@
 {% extends "base.html" %}{% block body %}
 <h1>Data</h1><p class="sub">Inputs the agents need that can't be fetched automatically within the sources' terms of use.</p>
+{% include "_freshness.html" %}
 <div class="card"><h3 style="margin:0 0 6px;font-size:15px">Fundamentals export</h3>
 <p class="small" style="margin-top:0">Upload a CSV or XLSX export from a Screener.in screen (or similar). Include as many of these columns as you can: NSE Code, Name, Current Price, Market Capitalization, Price to Earning, Sales growth 3Years, Profit growth 3Years, YOY Quarterly sales growth, Return on capital employed, Operating cash flow 3Years, EBITDA 3Years, Net profit 3Years, EBITDA, Debt, Cash Equivalents, Debt to equity, Number of equity shares, Number of equity shares 3Years back, Promoter holding, Change in promoter holding, Pledged percentage, Debtor days, Debtor days 3Years back, Contingent liabilities, Net worth, Capital work in progress, Volume 1month average.</p>
 <form method="post" action="/data/fundamentals" enctype="multipart/form-data" class="row"><input type="file" name="file" accept=".csv,.xlsx,.xls" required> <button class="primary">Upload and import</button></form>
-{% if fundamentals %}<p class="small">Last import: <strong>{{fundamentals.file}}</strong>, {{fundamentals.rows}} companies, {{fundamentals.imported[:16].replace('T',' ')}} UTC.<br>
+{% if fundamentals %}<p class="small">Last import: <strong>{{fundamentals.file}}</strong>, {{fundamentals.rows}} companies, {{fundamentals.imported|ist}}.<br>
 Recognised: {{fundamentals.recognised|join(', ')}}<br>Missing (rules using these show "?"): {{fundamentals.missing|join(', ')}}</p>{% endif %}</div>
 <h2>Announcements</h2>
 <div class="card"><p class="small" style="margin-top:0">NSE and BSE block automated downloads, so filings come in from your browser. On nseindia.com go to Companies listing → Corporate filings → Announcements, pick the date range (for example the last week), and use <em>Download (.csv)</em>. A BSE announcements export works too. Upload it here: the ingestion agent loads it and flags red-flag keywords (auditor resignation, SEBI orders, defaults, preferential issues) within a few minutes. Overlapping dates are fine; duplicates are skipped.</p>

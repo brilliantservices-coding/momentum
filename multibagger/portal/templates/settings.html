@@ -13,6 +13,6 @@
 <button class="primary">Save</button></form></div>
 <h2>Today</h2>
 <div class="card"><p style="margin-top:0">${{ "%.2f"|format(spend.usd or 0) }} of ${{llm.daily_cap_usd}} across {{spend.calls or 0}} call(s).</p>
-{% if calls %}<div class="tablewrap"><table><tr><th>At (UTC)</th><th>Agent</th><th>Provider</th><th>Model</th><th>USD</th></tr>
-{% for c in calls %}<tr><td>{{(c.at or '')[:19].replace('T',' ')}}</td><td>{{c.agent}}</td><td>{{c.provider}}</td><td>{{c.model}}</td><td class="num">{{ "%.3f"|format(c.usd or 0) }}</td></tr>{% endfor %}</table></div>{% endif %}</div>
+{% if calls %}<div class="tablewrap"><table><tr><th>At (IST)</th><th>Agent</th><th>Provider</th><th>Model</th><th>USD</th></tr>
+{% for c in calls %}<tr><td>{{c.at|ist('%d %b %Y %H:%M:%S')}}</td><td>{{c.agent}}</td><td>{{c.provider}}</td><td>{{c.model}}</td><td class="num">{{ "%.3f"|format(c.usd or 0) }}</td></tr>{% endfor %}</table></div>{% endif %}</div>
 {% endblock %}

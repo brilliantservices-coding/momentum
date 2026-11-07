@@ -1,7 +1,7 @@
 {% extends "base.html" %}{% block body %}
 <p class="small"><a href="/research">← Research</a></p>
 <h1>{{sym}} {% if score.tier %}<span class="pill {{'on' if score.tier in ('A','B') else 'off' if score.tier=='Reject' else ''}}">tier {{score.tier}}</span>{% endif %}</h1>
-<p class="sub">{{score.name or fundamentals.name or ''}} · score {{score.score}}{% if memo.archetype %} · {{memo.archetype}}{% endif %} · memo written {{(memo.written or '')[:16].replace('T',' ')}} UTC</p>
+<p class="sub">{{score.name or fundamentals.name or ''}} · score {{score.score}}{% if memo.archetype %} · {{memo.archetype}}{% endif %} · memo written {{memo.written|ist}}</p>
 {% if memo.summary %}<div class="card"><p style="margin-top:0">{{memo.summary}}</p>
 {% if memo.drivers %}<h3>Three drivers and their proof metrics</h3><ol>{% for d in memo.drivers %}<li>{{d.driver}} <span class="small">· proof: {{d.proof_metric}}</span></li>{% endfor %}</ol>{% endif %}
 {% if memo.valuation %}<p class="small">3-year value: bear {{memo.valuation.bear_3y}} · base {{memo.valuation.base_3y}} · bull {{memo.valuation.bull_3y}} (price {{memo.valuation.current_price}}). {{memo.valuation.method}}</p>{% endif %}
@@ -19,7 +19,7 @@
 {% if memo.guidance_track_record %}<p class="small">Guidance record: {{memo.guidance_track_record}}</p>{% endif %}</div>
 </div>
 <h2 id="redteam">Red team</h2>
-{% if redteam %}<div class="card"><p class="small" style="margin-top:0">{{redteam.verdict}} · score {{redteam.score_before}} → {{redteam.score_after}} · {{(redteam.written or '')[:10]}}</p>
+{% if redteam %}<div class="card"><p class="small" style="margin-top:0">{{redteam.verdict}} · score {{redteam.score_before}} → {{redteam.score_after}} · {{redteam.written|ist}}</p>
 <p>{{redteam.bear_case}}</p>
 {% if redteam.missed_risks %}<ul>{% for r in redteam.missed_risks %}<li><span class="pill {{'hard' if r.severity=='high' else 'soft'}}">{{r.severity}}</span> {{r.risk}} <span class="small">· {{r.evidence}}</span></li>{% endfor %}</ul>{% endif %}
 {% if redteam.weak_evidence %}<p class="small">Weak evidence: {{redteam.weak_evidence|join(' · ')}}</p>{% endif %}</div>
@@ -28,5 +28,5 @@
 {% if facts %}<div class="tablewrap"><table><tr><th>Type</th><th>Statement</th><th>Period</th><th>Source</th></tr>
 {% for f in facts %}<tr><td><span class="pill">{{f.type}}</span></td><td>{{f.statement}}</td><td class="small">{{f.period or ''}}</td><td class="small">{{f.filing_id}}{% if f.page %} p.{{f.page}}{% endif %}</td></tr>{% endfor %}</table></div>
 {% else %}<div class="card empty">No extracted facts yet.</div>{% endif %}
-{% if history|length > 1 %}<h2>Score history</h2><p class="small">{% for h in history %}{{(h.written or '')[:10]}}: {{h.score.score}} ({{h.score.tier}}){{ ' · ' if not loop.last }}{% endfor %}</p>{% endif %}
+{% if history|length > 1 %}<h2>Score history</h2><p class="small">{% for h in history %}{{h.written|ist('%d %b %Y')}}: {{h.score.score}} ({{h.score.tier}}){{ ' · ' if not loop.last }}{% endfor %}</p>{% endif %}
 {% endblock %}

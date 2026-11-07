@@ -15,6 +15,7 @@ from .. import announcements, drive
 from ..blob import get_blob
 from ..rules import filing_flags
 from ..store import now_iso
+from ..timefmt import coverage
 
 INBOX, DONE = "filings/inbox/", "filings/processed/"
 # Where the desktop scheduled task uploads NSE exports with gcloud.
@@ -34,6 +35,22 @@ def pull_drive(store, blob, log, folder_id: str, session=None) -> int:
     return pulled
 
 
+def update_coverage(store, dates, stamp, added: int) -> dict:
+    """Keeps control/filings_coverage: the date range of loaded filings, for the portal's freshness panel."""
+    prev = store.get("control", "filings_coverage") or {}
+    doc = {**coverage(dates, prev), "last_loaded": stamp, "count": (prev.get("count") or 0) + added}
+    store.set("control", "filings_coverage", doc)
+    return doc
+
+
+def rebuild_coverage(store) -> dict:
+    rows = store.list("filings")
+    doc = {**coverage([f.get("date") for f in rows]), "count": len(rows),
+           "last_loaded": max((f.get("ingested") or "" for f in rows), default=None) or None}
+    store.set("control", "filings_coverage", doc)
+    return doc
+
+
 def run(store, log, drive_session=None) -> dict:
     blob = get_blob()
     folder = os.getenv("MB_DRIVE_INBOX_ID")
@@ -45,7 +62,7 @@ def run(store, log, drive_session=None) -> dict:
             drive_error = f"{type(exc).__name__}: {exc}"[:300]
             log.error("drive: %s", drive_error)
     files = blob.list(INBOX) + blob.list(DESKTOP_INBOX)
-    stamp, total_new, flagged = now_iso(), 0, 0
+    stamp, total_new, flagged, new_dates = now_iso(), 0, 0, []
     for path in files:
         name = path.rsplit("/", 1)[-1]
         try:
@@ -58,6 +75,7 @@ def run(store, log, drive_session=None) -> dict:
                for i in items if not store.get("filings", i["id"])}
         if new:
             store.set_many("filings", new)
+            new_dates += [f.get("date") for f in new.values()]
         alerts = {}
         for fid, f in new.items():
             for fl in filing_flags(f"{f.get('category', '')} {f.get('subject', '')}"):
@@ -70,6 +88,8 @@ def run(store, log, drive_session=None) -> dict:
         total_new += len(new)
         flagged += len(alerts)
         log.info("%s: %d rows (%s), %d new, %d flags", name, report["rows"], report["exchange"], len(new), len(alerts))
+    if files:
+        update_coverage(store, new_dates, stamp, total_new)
     if not files:
         log.info("inbox empty: upload an announcements CSV on the portal's Data page")
     out = {"files": len(files), "from_drive": drive_files, "new_filings": total_new, "new_alerts": flagged}

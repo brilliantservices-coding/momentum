@@ -1,6 +1,6 @@
 {% extends "base.html" %}{% block body %}
-<h1>Watchlist</h1><p class="sub">Pass 1 quantitative screen. Survivors go on to concall and annual-report reading (phase 2 agents).
-{% if screen %}Last screen {{screen.date[:16].replace('T',' ')}} UTC: {{screen.passed}} of {{screen.screened}} passed{% if screen.added %}, new: {{screen.added|join(', ')}}{% endif %}.{% endif %}</p>
+<h1>Watchlist</h1><p class="sub">Pass 1 survivors. See the <a href="/funnel">Funnel</a> for every company considered and why each one stopped. Survivors go on to concall and annual-report reading (phase 2 agents).
+{% if screen %}Last screen {{screen.date|ist}}: {{screen.passed}} of {{screen.screened}} passed{% if screen.added %}, new: {{screen.added|join(', ')}}{% endif %}.{% endif %}</p>
 <p><a class="btn" href="/candidates?all={{0 if show_all else 1}}">{{'Show survivors only' if show_all else 'Show every screened company'}}</a></p>
 {% set cols=[("growth","Growth"),("roce","ROCE"),("cash_conversion","Cash"),("balance_sheet","Debt"),("promoter","Promoter"),("valuation","PEG"),("working_capital","WC")] %}
 {% if rows %}<div class="tablewrap"><table><tr><th>Company</th><th>Mcap ₹cr</th><th>P/E</th>{% for k,l in cols %}<th>{{l}}</th>{% endfor %}<th>Met</th><th>Flags</th></tr>

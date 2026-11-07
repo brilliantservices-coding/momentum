@@ -22,7 +22,9 @@ from mb.blob import get_blob
 from mb.config import load_agents, settings
 from mb.announcements import parse as parse_announcements
 from mb.fundamentals import import_file
-from mb.rules import WEIGHTS
+from mb.agents.ingestion import rebuild_coverage
+from mb.rules import GATE_LABELS, RULE_LABELS, WEIGHTS, pass1_reasons
+from mb.timefmt import age_days, ist
 from mb.store import get_store, now_iso
 
 HERE = Path(__file__).parent
@@ -30,6 +32,7 @@ ROLE = os.getenv("MB_ROLE", "portal")
 app = FastAPI(title="Multibagger control plane", docs_url=None, redoc_url=None)
 app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
 templates = Jinja2Templates(directory=HERE / "templates")
+templates.env.filters["ist"] = ist
 OPEN_PATHS = {"/healthz", "/hooks/budget"}
 
 
@@ -74,6 +77,70 @@ def _agents_with_state():
     return out
 
 
+def _freshness():
+    """What data the agents have, and how current it is (overview and Data page)."""
+    store = get_store()
+    cov = store.get("control", "filings_coverage")
+    if not cov and store.list("filings", limit=1):
+        cov = rebuild_coverage(store)  # one-off for filings loaded before coverage was tracked
+    fund = store.get("control", "fundamentals")
+    ann_age = age_days((cov or {}).get("last"))
+    fund_age = age_days((fund or {}).get("imported"))
+    return {"ann": cov, "ann_age": ann_age, "ann_stale": ann_age is None or ann_age > 5,
+            "fund": fund, "fund_age": fund_age, "fund_stale": fund_age is None or fund_age > 30}
+
+
+def _funnel():
+    """Every screened company, the furthest stage it reached and why it stopped there."""
+    store = get_store()
+    universe = len(store.list("universe"))
+    cands = store.list("candidates")
+    scores = {s["id"]: s for s in store.list("scores")}
+    proposals = {}
+    for p in store.list("proposals"):
+        if p.get("action") == "buy starter":
+            proposals.setdefault(p.get("symbol"), p)
+    held = {h["id"] for h in store.list("holdings")}
+    stage_names = ["Screened (fundamentals uploaded)", "Market cap and liquidity gates", "Enough data (4+ rules known)",
+                   "Pass 1 rules met (70%+ of known)", "No open hard red flag: watchlist", "Analysed by the AI analyst",
+                   "Conviction 50+ (tier A, B or C)", "Cleared the red team", "Proposed for purchase",
+                   "Approved by you / held"]
+    rows = []
+    for c in cands:
+        sym, gates = c["id"], c.get("gates") or {}
+        known, met = c.get("known") or 0, c.get("met") or 0
+        checks = [True, all(v is not False for v in gates.values()), known >= 4,
+                  known >= 4 and met >= max(4, -(-7 * known // 10)), c.get("passed") and not c.get("blocked_by")]
+        s = scores.get(sym)
+        checks += [bool(s), bool(s) and s.get("tier") in ("A", "B", "C"),
+                   bool(s) and s.get("tier") in ("A", "B", "C") and not s.get("redteam_needed"),
+                   sym in proposals or sym in held, sym in held]
+        reached = 0
+        for ok in checks:
+            if not ok:
+                break
+            reached += 1
+        if reached == len(checks):
+            why = "held"
+        elif reached < 5:
+            why = "; ".join(pass1_reasons(c)) or "did not pass"
+        else:
+            why = ["not analysed yet (analyst runs 5 names per run)", f"score {s and s.get('score')} below 50",
+                   "waiting for the red team", "no ticket yet (portfolio agent)", "ticket awaiting your decision"][reached - 5]
+        rows.append({**c, "reached": reached, "stage": stage_names[reached - 1], "why": why,
+                     "score": s and s.get("score"), "tier": s and s.get("tier")})
+    counts = [sum(1 for r in rows if r["reached"] > i) for i in range(len(stage_names))]
+    stages = [{"name": "NSE universe", "n": universe}] + [{"name": n, "n": counts[i], "idx": i + 1}
+                                                          for i, n in enumerate(stage_names)]
+    factors = []
+    for k, label in {**GATE_LABELS, **RULE_LABELS}.items():
+        vals = [(c.get("gates") or {}).get(k) if k in GATE_LABELS else (c.get("rules") or {}).get(k) for c in cands]
+        factors.append({"key": k, "label": label, "pass": sum(v is True for v in vals),
+                        "fail": sum(v is False for v in vals), "unknown": sum(v is None for v in vals)})
+    rows.sort(key=lambda r: (-r["reached"], -(r.get("met") or 0), r["id"]))
+    return stages, factors, rows
+
+
 def _month_cost():
     store = get_store()
     month = now_iso()[:7]
@@ -100,8 +167,9 @@ def overview(request: Request, msg: str = ""):
         "filings_7d": len(store.list("filings", where=[("ingested", ">=", week_ago)])),
         "pending": len(store.list("proposals", where=[("status", "==", "pending")])),
     }
+    stages, _, _ = _funnel()
     return render(request, "overview.html", agents=_agents_with_state(), stats=stats, cost=_month_cost(),
-                  fundamentals=store.get("control", "fundamentals"), msg=msg)
+                  fresh=_freshness(), stages=stages, msg=msg)
 
 
 @app.get("/agents/{agent_id}", response_class=HTMLResponse)
@@ -146,6 +214,19 @@ def kill(request: Request, action: str = Form(...)):
         msg = "Kill switch released, schedules restored"
     get_store().set("audit", f"{now_iso()}-global-{action}", {"at": now_iso(), "user": user, "action": action})
     return back("/", msg)
+
+
+@app.get("/funnel", response_class=HTMLResponse)
+def funnel(request: Request, stage: int = 0, q: str = ""):
+    stages, factors, rows = _funnel()
+    if stage:
+        rows = [r for r in rows if r["reached"] == stage]
+    if q:
+        rows = [r for r in rows if q.upper() in r["id"] or q.lower() in (r.get("name") or "").lower()]
+    store = get_store()
+    return render(request, "funnel.html", stages=stages, factors=factors, rows=rows[:500], total=len(rows),
+                  stage=stage, q=q, rule_labels=RULE_LABELS, gate_labels=GATE_LABELS, fresh=_freshness(),
+                  screen=(store.list("screens", order_by="date", limit=1) or [None])[0])
 
 
 @app.get("/candidates", response_class=HTMLResponse)
@@ -215,7 +296,7 @@ def approval_decide(request: Request, pid: str, decision: str = Form(...), note:
 @app.get("/data", response_class=HTMLResponse)
 def data_page(request: Request, msg: str = ""):
     store = get_store()
-    return render(request, "data.html", fundamentals=store.get("control", "fundamentals"),
+    return render(request, "data.html", fundamentals=store.get("control", "fundamentals"), fresh=_freshness(),
                   universe=len(store.list("universe")), inbox=get_blob().list("filings/inbox/"),
                   processed=get_blob().list("filings/processed/")[-5:], msg=msg)
 

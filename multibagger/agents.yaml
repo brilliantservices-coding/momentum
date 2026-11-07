@@ -9,7 +9,7 @@ agents:
     phase: 1
   - id: ingestion
     name: Ingestion agent
-    description: Loads announcement CSVs you upload on the Data page into the filings table and runs the red-flag keyword checks on them. Runs right after each upload; the daily run picks up anything missed.
+    description: Loads the NSE announcement CSVs your PC downloads every Mon and Thu (plus any you upload on the Data page) into the filings table and runs the red-flag keyword checks on them. Runs right after each upload; the daily run picks up anything missed.
     schedule: "30 19 * * 1,4"    # Mon and Thu 19:30, after the desktop download
     cadence: twice weekly
     phase: 1

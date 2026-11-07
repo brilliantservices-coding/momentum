@@ -2,10 +2,10 @@
 <h1>Approvals</h1><p class="sub">Order tickets proposed by the portfolio agent. Nothing is ever sent to a broker: approving records your decision in the journal and adds the name to your holdings list (an approved exit removes it); you place the order yourself.</p>
 <div class="row" style="margin-bottom:12px">{% for s in ["pending","approved","edited","rejected"] %}<a class="btn" href="/approvals?status={{s}}" {% if s==status %}style="border-color:var(--accent)"{% endif %}>{{s|capitalize}}</a>{% endfor %}</div>
 {% if rows %}{% for p in rows %}<div class="card" style="margin-bottom:12px">
-<div class="meta"><span class="pill">{{p.action}}</span><strong style="color:var(--ink)">{{p.symbol}}</strong><span>tier {{p.tier}}</span><span>score {{p.score}}</span><span>size {{p.size_pct}}%</span><span>{{p.created[:10]}}</span></div>
+<div class="meta"><span class="pill">{{p.action}}</span><strong style="color:var(--ink)">{{p.symbol}}</strong><span>tier {{p.tier}}</span><span>score {{p.score}}</span><span>size {{p.size_pct}}%</span><span>{{p.created|ist}}</span></div>
 <p style="margin:0 0 8px">{{p.reason}}</p>{% if p.memo_link %}<p class="small"><a href="{{p.memo_link}}">Thesis memo</a>{% if p.redteam_link %} · <a href="{{p.redteam_link}}">Red-team note</a>{% endif %}</p>{% endif %}
 {% if status=="pending" %}<form method="post" action="/approvals/{{p.id}}" class="row"><input type="text" name="note" placeholder="Note for the journal" style="flex:1;min-width:200px">
 <button class="primary" name="decision" value="approved">Approve</button><button name="decision" value="edited">Approve with edits</button><button class="danger" name="decision" value="rejected">Reject</button></form>
-{% else %}<p class="small">{{p.decided_by}} · {{p.decided}} · {{p.decision_note}}</p>{% endif %}</div>{% endfor %}
+{% else %}<p class="small">{{p.decided_by}} · {{p.decided|ist}} · {{p.decision_note}}</p>{% endif %}</div>{% endfor %}
 {% else %}<div class="card empty">No {{status}} proposals. Tickets appear here after the analyst, red-team and portfolio agents run.</div>{% endif %}
 {% endblock %}
