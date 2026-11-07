@@ -84,9 +84,10 @@ def _freshness():
     if not cov and store.list("filings", limit=1):
         cov = rebuild_coverage(store)  # one-off for filings loaded before coverage was tracked
     fund = store.get("control", "fundamentals")
+    upload = store.get("control", "fundamentals_upload")
     ann_age = age_days((cov or {}).get("last"))
     fund_age = age_days((fund or {}).get("imported"))
-    return {"ann": cov, "ann_age": ann_age, "ann_stale": ann_age is None or ann_age > 5,
+    return {"ann": cov, "ann_age": ann_age, "upload": upload, "ann_stale": ann_age is None or ann_age > 5,
             "fund": fund, "fund_age": fund_age,
             "fund_stale": fund_age is None or fund_age > (9 if (fund or {}).get("source") == "yahoo" else 30)}
 
