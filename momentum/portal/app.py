@@ -103,15 +103,18 @@ def _book_view(store):
     if week:
         prices.update({h["symbol"]: h.get("close") for h in week.get("holds", []) if h.get("close")})
         prices.update({c["symbol"]: c.get("price") for c in week.get("changes", []) if c.get("price")})
-    rows, invested = [], 0.0
+    rows, invested, parked = [], 0.0, 0.0
     for sym, p in sorted(book.get("positions", {}).items()):
         last = prices.get(sym) or p["entry"]
         val = p["qty"] * last
-        invested += val
+        if p.get("liquid"):
+            parked += val
+        else:
+            invested += val
         rows.append({"symbol": sym, **p, "last": last, "value": val, "pnl_pct": 100 * (last / p["entry"] - 1),
-                     "risk": max(0.0, p["qty"] * (min(last, p["entry"]) - p["stop"]))})
-    total = book["cash"] + invested
-    return book, rows, {"cash": book["cash"], "invested": invested, "total": total,
+                     "risk": 0.0 if p.get("liquid") else max(0.0, p["qty"] * (min(last, p["entry"]) - p["stop"]))})
+    total = book["cash"] + invested + parked
+    return book, rows, {"cash": book["cash"], "invested": invested, "parked": parked, "total": total,
                         "exposure_pct": 100 * invested / total if total else 0,
                         "heat_pct": 100 * sum(r["risk"] for r in rows) / total if total else 0,
                         "return_pct": 100 * (total / book["capital"] - 1) if book.get("capital") else 0}

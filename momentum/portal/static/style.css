@@ -61,3 +61,6 @@ table.changes td[data-label=Why]{grid-column:1/-1}table.changes td input[type=te
 .screen thead th{position:sticky;top:0;background:var(--panel)}
 select{font:inherit;font-size:13px;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--ink)}
 .tablewrap th[scope],.tablewrap tbody th{text-align:left;width:38%}
+.summary .sitem{padding:6px 0;border-bottom:1px solid var(--line)}.summary .sitem:last-child{border-bottom:0}
+.summary h3{font-size:14px;margin:4px 0 2px}.summary p{margin:0 0 4px;font-size:14px}
+.pill.act-park,.pill.act-unpark{color:var(--accent)}

@@ -11,7 +11,7 @@ from datetime import date
 import numpy as np
 import pandas as pd
 
-from .config import REGIME_EXPOSURE
+from .config import LIQUID, REGIME_EXPOSURE
 from .signals import trend_template
 
 
@@ -150,10 +150,15 @@ def _setup(r) -> tuple[str | None, str]:
     return None, "no pivot this week (wait for a breakout or a pullback to the 10-week MA)"
 
 
-def propose(m: pd.DataFrame, book: dict, reg: dict, cfg: dict, today: date | None = None) -> dict:
+def propose(m: pd.DataFrame, book: dict, reg: dict, cfg: dict, today: date | None = None,
+            liquid_price: float | None = None) -> dict:
     today = today or date.today()
-    positions: dict = book.get("positions", {})
-    cash = float(book.get("cash", 0))
+    all_pos: dict = book.get("positions", {})
+    positions = {s: p for s, p in all_pos.items() if s != LIQUID}
+    liq_qty = int(all_pos.get(LIQUID, {}).get("qty", 0))
+    liquid_price = float(liquid_price or all_pos.get(LIQUID, {}).get("entry") or 1000.0)
+    # Money in LIQUIDBEES counts as spendable: it is sold to fund buys and topped up with what's left
+    cash = float(book.get("cash", 0)) + liq_qty * liquid_price
     px = m["close"].to_dict()
     value = cash + sum(p["qty"] * px.get(s, p["entry"]) for s, p in positions.items())
     peak = max(float(book.get("peak_value") or value), value)
@@ -292,6 +297,23 @@ def propose(m: pd.DataFrame, book: dict, reg: dict, cfg: dict, today: date | Non
             sector_val[r["sector"]] = sector_val.get(r["sector"], 0) + qty * entry
             slots -= 1
     changes.extend(buys)
+
+    # Park whatever is not needed in LIQUIDBEES (sell units first when buys need the money)
+    liquid = {"symbol": LIQUID, "price": _f(liquid_price), "qty_now": liq_qty, "qty_after": liq_qty}
+    if int(cfg.get("park_in_liquid", 1)):
+        buffer = cfg.get("cash_buffer_pct", 1.0) / 100 * value
+        target = int(max(0.0, cash - buffer) // liquid_price)
+        diff = target - liq_qty
+        if diff > 0:
+            changes.append({"type": "park", "symbol": LIQUID, "qty": diff, "price": _f(liquid_price),
+                            "reasons": [f"park idle cash in {LIQUID} (liquid fund ETF) instead of leaving it uninvested",
+                                        f"keeps {cfg.get('cash_buffer_pct', 1.0):g}% of the book as cash for charges"]})
+        elif diff < 0:
+            changes.insert(0, {"type": "unpark", "symbol": LIQUID, "qty": -diff, "price": _f(liquid_price),
+                               "reasons": [f"sell {LIQUID} units to pay for this week's buys"]})
+        liquid["qty_after"] = target
+    liquid["value_after"] = _f(liquid["qty_after"] * liquid_price)
+    cash -= liquid["qty_after"] * liquid_price
     eligible = int(min(top_n, len(ranked)))
     tail = [
         {"step": f"Top {top_n} by momentum score" + (" (Red regime: no new buys)" if regime_name == "red" else
@@ -311,6 +333,7 @@ def propose(m: pd.DataFrame, book: dict, reg: dict, cfg: dict, today: date | Non
                for s, r in ranked.head(cfg["exit_rank"]).iterrows()]
     return {
         "changes": changes, "holds": holds, "watchlist": watch, "ranking": ranking,
+        "liquid": liquid,
         "book": {"value": _f(value), "cash_now": _f(book.get("cash", 0)), "cash_after": _f(cash),
                  "invested_after": _f(invested), "exposure_after_pct": _f(100 * invested / value, 1) if value else 0,
                  "heat_after_pct": _f(100 * heat / value, 2) if value else 0, "peak_value": _f(peak),
@@ -319,3 +342,97 @@ def propose(m: pd.DataFrame, book: dict, reg: dict, cfg: dict, today: date | Non
         "counts": {"universe": int(len(m)), "passing": int(m["passes"].sum()),
                    "template": int(m["template"].fillna(False).sum())},
     }
+
+
+REGIME_MEANING = {
+    "green": "the market is in a healthy uptrend, so the strategy can be fully invested in stocks",
+    "amber": "the market's trend is mixed, so the strategy keeps stocks to about half the book and buys only the top 5, at half size",
+    "red": "the market is in a downtrend, which is when momentum stocks fall hardest, so the strategy makes no new buys and keeps at most 20% in stocks",
+}
+
+
+def _inr(x: float) -> str:
+    return f"₹{x:,.0f}"
+
+
+def summarize(p: dict, cfg: dict) -> list[dict]:
+    """Plain-English account of the week: the regime and why, the funnel, and why each kind of
+    change was or was not proposed. Each item is {"title", "text"}."""
+    reg, out = p["regime"], []
+    name = reg["regime"]
+    trend = (f"Nifty 500 closed at {reg['index_close']:,.0f}, {'above' if reg['above_ma40'] else 'below'} its 40-week "
+             f"average of {reg['ma40w']:,.0f}, and that average is {'rising' if reg['ma40_rising'] else 'falling'}")
+    breadth = f"{100 * reg['breadth']:.0f}% of Nifty 500 stocks are above their 200-day average"
+    if name == "red" or reg["raw"] == "red":
+        why = []
+        if not reg["above_ma40"] and not reg["ma40_rising"]:
+            why.append("the index is below a falling 40-week average")
+        if reg["breadth"] < 0.35:
+            why.append("fewer than 35% of stocks are above their 200-day average")
+        rule = "Red when " + " and ".join(why) if why else "Red"
+    elif name == "green":
+        rule = "Green needs the index above a rising 40-week average and more than 50% of stocks above their 200-day average; both hold"
+    else:
+        rule = "Amber when only one of the two Green conditions holds (index above a rising 40-week average; more than 50% of stocks above their 200-day average)"
+    text = f"{trend}; {breadth}. Rule: {rule}. In plain terms, {REGIME_MEANING[name]}."
+    if reg["raw"] != name:
+        text += (f" This week's reading alone is {reg['raw'].capitalize()}, but the strategy only moves up one level "
+                 f"after two weekly closes in the better regime, so it stays {name.capitalize()}.")
+    out.append({"title": f"Market regime: {name.capitalize()}", "text": text})
+
+    f = p.get("funnel") or []
+    filters = [x for x in f if x.get("key")]
+    if f:
+        biggest = sorted(filters, key=lambda x: -x.get("dropped", 0))[:3]
+        drops = ", ".join(f"“{b['step']}” (−{b['dropped']})" for b in biggest if b.get("dropped"))
+        out.append({"title": "Stock funnel", "text": (
+            f"Of {f[0]['left']} Nifty 500 stocks with prices, {p['counts']['passing']} passed every filter. "
+            + (f"The filters that removed the most were {drops}. " if drops else "")
+            + "The Screen page lists every stock with each factor marked pass or fail.")})
+
+    buys = [c for c in p["changes"] if c["type"] == "buy"]
+    w = p.get("watchlist", [])
+    if buys:
+        text = f"{len(buys)} buy(s): " + ", ".join(f"{b['symbol']} (rank {b['rank']}, {b['setup']})" for b in buys) + "."
+    elif name == "red":
+        ok = [x["symbol"] for x in w if x.get("setup_ok")]
+        text = ("None, because of the Red regime rule: no new buys until the market trend improves. "
+                + (f"For reference, {len(ok)} top-ranked stock(s) had a valid entry this week and would have been "
+                   f"candidates in a better market: {', '.join(ok)}." if ok else
+                   "None of the top-ranked stocks had a valid entry (breakout or pullback) this week anyway."))
+    elif not p["counts"]["passing"]:
+        text = "None: no stock passed every filter this week."
+    else:
+        text = ("None: the top-ranked stocks had no valid entry this week. A buy needs a breakout above a 10-week base on "
+                "1.5x volume, or a quiet pullback to a rising 10-week average, and must not be more than "
+                f"{cfg['extended_pct']:g}% above its pivot. The watchlist shows the reason for each.")
+    out.append({"title": "New buys", "text": text})
+
+    sells = [c for c in p["changes"] if c["type"] in ("sell", "trim")]
+    stops = [c for c in p["changes"] if c["type"] == "raise_stop"]
+    if sells or stops or p.get("holds"):
+        parts = []
+        if sells:
+            parts.append("sell " + ", ".join(f"{c['symbol']} ({c['reasons'][0]})" for c in sells))
+        if stops:
+            parts.append("raise the stop on " + ", ".join(c["symbol"] for c in stops))
+        kept = [h["symbol"] for h in p.get("holds", [])]
+        if kept:
+            parts.append("keep " + ", ".join(kept))
+        out.append({"title": "Holdings", "text": "Proposed: " + "; ".join(parts) + "."})
+    else:
+        out.append({"title": "Holdings", "text": "The Momentum book holds no stocks, so there is nothing to sell."})
+
+    liq = p.get("liquid") or {}
+    park = next((c for c in p["changes"] if c["type"] in ("park", "unpark")), None)
+    if park and park["type"] == "park":
+        text = (f"Buy {park['qty']} units of {liq['symbol']} at about ₹{park['price']:,.2f} "
+                f"({_inr(park['qty'] * park['price'])}), so money not needed for stocks earns liquid-fund returns.")
+    elif park:
+        text = f"Sell {park['qty']} units of {liq['symbol']} to pay for this week's buys."
+    elif liq.get("qty_after"):
+        text = f"{liq['qty_after']} units of {liq['symbol']} ({_inr(liq['value_after'])}) stay parked; no change needed."
+    else:
+        text = "Idle cash stays as cash (parking in LIQUIDBEES is off in Settings)."
+    out.append({"title": "Idle cash", "text": text + f" Plain cash after this week: {_inr(p['book']['cash_after'])}."})
+    return out

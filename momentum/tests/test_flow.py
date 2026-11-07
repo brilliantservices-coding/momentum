@@ -37,6 +37,7 @@ def test_weekly_run_and_signoff():
     home = client.get("/").text
     assert "IST" in home and "UTC" not in home and "Next scheduled run" in home
     assert "Failed: Weekly RSI above 60" in client.get(f"/weeks/{wid}/screen").text
+    assert w["summary"] and "Why this week looks the way it does" in home
 
     first, second = buys[0], buys[1] if len(buys) > 1 else None
     form = {f"ok_{first['id']}": "on", f"qty_{first['id']}": "7", f"price_{first['id']}": str(first["price"] + 1),
