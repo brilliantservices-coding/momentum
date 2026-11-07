@@ -11,6 +11,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .. import yahoo
+from ..fundamentals import fresh_overlays
 from ..store import now_iso
 
 MCAP_MIN, MCAP_MAX = 400.0, 22000.0  # fetch statements a little either side of the ₹500-20,000 cr gate
@@ -28,6 +29,7 @@ def run(store, log, fetch=yahoo.fetch) -> dict:
     symbols = sorted(universe, key=lambda s: seen.get(s, ""))
     if LIMIT:
         symbols = symbols[:LIMIT]
+    overlays = fresh_overlays(store)  # Trendlyne/Screener fields win over Yahoo's for the stocks they cover
     start, stamp = time.monotonic(), now_iso()
     done, in_range, missing, errors, buf = 0, 0, 0, {}, {}
 
@@ -60,7 +62,7 @@ def run(store, log, fetch=yahoo.fetch) -> dict:
                     missing += 1
                 else:
                     in_range += not rec.get("out_of_range")
-                    buf[sym] = {**rec, "symbol": sym, "source": "yahoo", "as_of": now_iso()}
+                    buf[sym] = {**rec, **overlays.get(sym, {}), "symbol": sym, "source": "yahoo", "as_of": now_iso()}
                 done += 1
                 if len(buf) >= 100:
                     flush()
@@ -75,7 +77,7 @@ def run(store, log, fetch=yahoo.fetch) -> dict:
         "file": SOURCE, "source": "yahoo", "imported": stamp, "rows": done - missing,
         "recognised": sorted(k for k in yahoo.ROWS) + ["info"], "with_statements": in_range,
         "missing": ["pledge", "promoter_change (Yahoo has no pledge or promoter-change data)"],
-        "complete": done == len(symbols)})
+        "complete": done == len(symbols), "overlaid": sum(1 for s in overlays if s in seen or s in symbols)})
     # Structured red flags (cash-less profits, dilution, receivables) straight away, before Saturday's screen.
     from . import forensic
     flags = forensic.run(store=store, log=log)

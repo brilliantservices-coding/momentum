@@ -6,6 +6,11 @@ from ..store import now_iso
 
 
 def run(store, log) -> dict:
+    from ..blob import get_blob
+    from ..fundamentals import import_inbox
+    if import_inbox(store, get_blob(), log):  # Trendlyne export from the Friday desktop task
+        from . import forensic
+        forensic.run(store=store, log=log)
     funds = store.list("fundamentals")
     if not funds:
         raise RuntimeError("no fundamentals loaded yet: upload a Screener export on the portal's Data page")

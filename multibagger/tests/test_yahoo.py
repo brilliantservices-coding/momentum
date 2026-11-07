@@ -74,3 +74,30 @@ def test_fundamentals_agent(env):
     from portal.app import app
     page = TestClient(app).get("/").text
     assert "automatic</span></h3>" in page and "Yahoo Finance (weekly agent)" in page
+
+
+TL = b'''"Sl No","Stock","LTP","NSE Code","BSE Code","ISIN","LT Debt To Equity Ann ","Promoter holding pledge percentage % Qtr","ROCE Ann  3Y Avg %"
+"1","Alpha Precision Ltd.","510.5","ALPHA","500001","INE000A01011","0.12","25.5","19.2"
+'''
+
+
+def test_trendlyne_overlay_wins_both_orders(env):
+    import logging
+
+    from mb.agents import fundamentals, screener
+    from mb.yahoo import metrics
+    store, blob = env
+    store.set("universe", "ALPHA", {"name": "A"})
+    fake = lambda sym, lo, hi: metrics(INFO, INCOME, BALANCE, CASH)  # noqa: E731
+    fundamentals.run(store=store, log=LOG, fetch=fake)
+    assert store.get("fundamentals", "ALPHA").get("pledge") is None
+    blob.put("inbox/fundamentals/trendlyne-20261107.csv", TL)  # the Friday desktop task's upload
+    screener.run(store=store, log=logging.getLogger("t"))
+    f = store.get("fundamentals", "ALPHA")
+    assert f["pledge"] == 25.5 and f["price"] == 510.5 and f["sales_cagr_3y"] is not None  # merged, not replaced
+    assert store.get("alerts", "ALPHA-pledge_above_20")["severity"] == "hard"  # forensic ran after the import
+    assert not store.get("candidates", "ALPHA")["passed"]
+    assert blob.list("inbox/fundamentals/") == []
+    fundamentals.run(store=store, log=LOG, fetch=fake)  # next Yahoo refresh keeps Trendlyne's fields
+    assert store.get("fundamentals", "ALPHA")["pledge"] == 25.5
+    assert store.get("control", "fundamentals_upload")["file"].startswith("trendlyne")
