@@ -1,0 +1,3 @@
+{% macro inr(v, d=0) %}{% if v is none %}–{% else %}₹{{ ("{:,.%df}" % d).format(v) }}{% endif %}{% endmacro %}
+{% macro pct(v, d=1, sign=True) %}{% if v is none %}–{% else %}<span class="{{'tick' if v>0 else 'cross' if v<0 else ''}}">{{ ("{:+.%df}%%" % d if sign else "{:.%df}%%" % d).format(v) }}</span>{% endif %}{% endmacro %}
+{% macro regime_pill(r) %}<span class="pill regime-{{r}}">{{ r|capitalize }}</span>{% endmacro %}
