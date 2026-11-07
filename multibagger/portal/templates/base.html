@@ -1,0 +1,12 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{% block title %}Multibagger control{% endblock %}</title><link rel="stylesheet" href="/static/style.css"></head>
+<body><header><div class="wrap top"><div class="brand">Multibagger<small>agents · India</small></div>
+<nav>{% for href,label in [("/","Overview"),("/candidates","Watchlist"),("/alerts","Red flags"),("/filings","Filings"),("/approvals","Approvals"),("/data","Data"),("/costs","Costs")] %}
+<a href="{{href}}" class="{{'on' if nav==href or (href!='/' and nav.startswith(href)) }}">{{label}}</a>{% endfor %}</nav>
+<div class="user">{{user}}</div></div></header>
+<main class="wrap">
+{% if kill.killed %}<div class="banner bad"><strong>Kill switch is on.</strong> {{kill.reason}} ({{kill.at}}). Scheduled runs are paused.</div>{% endif %}
+{% if msg %}<div class="flash">{{msg}}</div>{% endif %}
+{% block body %}{% endblock %}
+<p class="small" style="margin-top:40px">Educational research tool, not financial advice. Agents propose; you decide and place every order yourself.</p>
+</main></body></html>
