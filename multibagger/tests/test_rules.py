@@ -58,3 +58,10 @@ def test_flag_tuning():
     assert filing_flags("Corporate Insolvency Resolution Process")[0]["severity"] == "hard"
     assert filing_flags("SEBI Order Granting Exemption to business trusts") == []
     assert filing_flags("Reply to Show Cause Notice, Department of Commercial Taxes")[0]["severity"] == "soft"
+
+
+def test_financials_skip_cash_tests():
+    lender = {"cfo_3y": -5000, "profit_3y": 1700, "ebitda_3y": 2500, "industry": "Housing Finance"}
+    assert not [f for f in structured_flags(lender) if f["rule"] == "profit_without_cash"]
+    assert pass1(lender)["rules"]["cash_conversion"] is None
+    assert structured_flags({**lender, "industry": "Auto Parts"})[0]["rule"] == "profit_without_cash"

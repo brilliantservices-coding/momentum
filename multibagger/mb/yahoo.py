@@ -87,6 +87,7 @@ def metrics(info: dict, income, balance, cashflow, quarterly=None) -> dict:
     d_now, eq_now = _at(debt, 0), _at(eq, 0)
     rec = {
         "name": info.get("longName") or info.get("shortName"),
+        "sector": info.get("sector"), "industry": info.get("industry"),
         "price": price,
         "mcap": _cr(info.get("marketCap")),
         "pe": info.get("trailingPE"),
@@ -122,7 +123,8 @@ def info_fields(info: dict) -> dict:
     price = info.get("currentPrice") or info.get("regularMarketPrice") or info.get("previousClose")
     vol = info.get("averageVolume") or info.get("averageDailyVolume3Month")
     insiders = info.get("heldPercentInsiders")
-    rec = {"name": info.get("longName") or info.get("shortName"), "price": price, "mcap": _cr(info.get("marketCap")),
+    rec = {"name": info.get("longName") or info.get("shortName"), "sector": info.get("sector"),
+           "industry": info.get("industry"), "price": price, "mcap": _cr(info.get("marketCap")),
            "pe": info.get("trailingPE"), "promoter": 100 * insiders if insiders is not None else None,
            "avg_traded_value_cr": (vol * price / CR) if vol and price else None, "volume_1m_avg": vol}
     return {k: (round(v, 4) if isinstance(v, float) else v) for k, v in rec.items()}
@@ -146,7 +148,8 @@ def fetch(symbol: str, mcap_min_cr: float, mcap_max_cr: float, retries: int = 3,
                 return {**info_fields(info), "light": True}
             return metrics(info, t.income_stmt, t.balance_sheet, t.cashflow, t.quarterly_income_stmt)
         except Exception as exc:
-            if "Too Many Requests" in str(exc) or "429" in str(exc):
+            msg = str(exc).lower()
+            if any(w in msg for w in ("too many requests", "429", "invalid crumb", "unauthorized")):
                 time.sleep(30 * (attempt + 1))
             elif attempt == retries - 1:
                 raise

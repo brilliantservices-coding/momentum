@@ -3,6 +3,7 @@ import sys
 from pathlib import Path
 
 os.environ.setdefault("MB_BACKEND", "local")
+os.environ.setdefault("MB_YAHOO_PAUSE", "0")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import pytest  # noqa: E402

@@ -22,7 +22,10 @@ from ..fundamentals import fresh_overlays
 from ..store import now_iso
 
 MCAP_MIN, MCAP_MAX = 400.0, 22000.0  # fetch statements a little either side of the ₹500-20,000 cr gate
-WORKERS = int(os.getenv("MB_YAHOO_WORKERS", "3"))
+WORKERS = int(os.getenv("MB_YAHOO_WORKERS", "1"))
+PAUSE_S = float(os.getenv("MB_YAHOO_PAUSE", "1.0"))  # between requests; Yahoo cut off ~10 req/s after 10 minutes
+REFUSED_STOP = 15  # consecutive refusals (401 crumb / 429) before the run stops; the rest go first next run
+REFUSED_WORDS = ("invalid crumb", "unauthorized", "too many requests", "429", "unable to access")
 BUDGET_MIN = float(os.getenv("MB_YAHOO_MAX_MINUTES", "150"))
 LIMIT = int(os.getenv("MB_YAHOO_LIMIT", "0"))  # 0 = whole universe; set for a quick test run
 SOURCE = "Yahoo Finance (weekly agent)"
@@ -72,6 +75,7 @@ def run(store, log, fetch=yahoo.fetch) -> dict:
     overlays = fresh_overlays(store)  # Trendlyne/Screener fields win over Yahoo's for the stocks they cover
     start, stamp = time.monotonic(), now_iso()
     done, in_range, missing, errors, buf = 0, 0, 0, {}, {}
+    refused, cut_off = 0, False
 
     def flush():
         if buf:
@@ -98,6 +102,9 @@ def run(store, log, fetch=yahoo.fetch) -> dict:
                 except Exception as exc:
                     errors[sym] = f"{type(exc).__name__}: {exc}"[:160]
                     rec = None
+                    refused = refused + 1 if any(w in str(exc).lower() for w in REFUSED_WORDS) else 0
+                else:
+                    refused = 0
                 if rec is None:
                     missing += 1
                 else:
@@ -112,7 +119,12 @@ def run(store, log, fetch=yahoo.fetch) -> dict:
                 if not stopped and (time.monotonic() - start) / 60 > BUDGET_MIN:
                     stopped = True
                     log.warning("time budget reached after %d symbols; the rest go first next run", done)
+                if not stopped and refused >= REFUSED_STOP:
+                    stopped = cut_off = True
+                    log.warning("Yahoo is refusing requests after %d symbols; stopping, the rest go first next run", done)
                 if not stopped:
+                    if PAUSE_S:
+                        time.sleep(PAUSE_S)
                     submit_next()
                 break
     flush()
@@ -130,4 +142,5 @@ def run(store, log, fetch=yahoo.fetch) -> dict:
     return {"symbols": done, "planned": counts, "minutes": round((time.monotonic() - start) / 60, 1),
             "with_statements": in_range, "not_found": missing, "errors": len(errors),
             "sample_errors": dict(list(errors.items())[:5]), "complete": done == len(symbols),
+            "yahoo_cut_off": cut_off,
             "new_red_flags": flags.get("new_alerts")}
