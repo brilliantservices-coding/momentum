@@ -1,6 +1,6 @@
 {% extends "base.html" %}{% block body %}
 <h1>Runs</h1><p class="sub">Each execution of the weekly job, with its log.</p>
-{% for r in runs %}<div class="card" style="margin-bottom:10px"><div class="meta"><span class="pill {{r.status}}">{{r.status}}</span><span>{{(r.started or '')[:16].replace('T',' ')}} UTC</span><span>week {{r.week}}</span>{% if r.duration_s %}<span>{{r.duration_s}} s</span>{% endif %}</div>
+{% for r in runs %}<div class="card" style="margin-bottom:10px"><div class="meta"><span class="pill {{r.status}}">{{r.status}}</span><span>{{r.started|ist}}{% if r.finished %} → {{r.finished|ist('%H:%M IST')}}{% endif %}</span><span>week {{r.week}}</span>{% if r.duration_s %}<span>{{r.duration_s}} s</span>{% endif %}</div>
 {% if r.summary %}<p class="small" style="margin:0">{{r.summary}}</p>{% endif %}
 {% if r.log %}<details><summary>Log</summary><pre>{{ r.log|join('\n') }}</pre></details>{% endif %}</div>
 {% else %}<div class="card empty">No runs yet.</div>{% endfor %}

@@ -83,7 +83,7 @@ fi
 say "Portal (Cloud Run, scales to zero, Google sign-in via IAP)"
 PORTAL_FLAGS=(--region="$REGION" --image="$IMAGE" --service-account="$SA_PORTAL" --no-allow-unauthenticated
   --min-instances=0 --max-instances=1 --cpu=1 --memory=512Mi --labels="$LABELS")
-PENV="$ENV,MOM_ALLOWED_USERS=${OWNER_EMAILS//,/;}"
+PENV="$ENV,MOM_ALLOWED_USERS=${OWNER_EMAILS//,/;},MOM_SCHEDULE=$SCHEDULE"
 if $G run deploy mom-portal "${PORTAL_FLAGS[@]}" --iap --set-env-vars="$PENV" || \
    $G beta run deploy mom-portal "${PORTAL_FLAGS[@]}" --iap --set-env-vars="$PENV"; then
   $G beta services identity create --service=iap.googleapis.com >/dev/null 2>&1 || true

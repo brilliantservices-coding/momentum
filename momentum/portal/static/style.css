@@ -52,3 +52,12 @@ table.changes tr{display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;padding
 table.changes td{border:0;padding:2px 0;text-align:left}
 table.changes td::before{content:attr(data-label);display:block;color:var(--muted);font-size:11.5px}
 table.changes td[data-label=Why]{grid-column:1/-1}table.changes td input[type=text]{text-align:left}}
+.funnel .frow{display:grid;grid-template-columns:minmax(0,260px) 1fr 48px 70px;gap:10px;align-items:center;padding:3px 0;font-size:13px}
+.fbar{height:10px;background:var(--chip);border-radius:99px;overflow:hidden}.fbar i{display:block;height:100%;background:var(--accent)}
+.fnum{text-align:right;font-variant-numeric:tabular-nums;font-weight:600}.fdrop{color:var(--bad)}
+@media (max-width:640px){.funnel .frow{grid-template-columns:1fr 40px 60px}.funnel .fbar{grid-column:1/-1;order:3}}
+.screen th.fac{font-size:11px;padding:6px 4px;text-align:center;cursor:help}
+.screen td.fc{text-align:center;padding:6px 3px}.nowrap{white-space:nowrap}
+.screen thead th{position:sticky;top:0;background:var(--panel)}
+select{font:inherit;font-size:13px;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--ink)}
+.tablewrap th[scope],.tablewrap tbody th{text-align:left;width:38%}

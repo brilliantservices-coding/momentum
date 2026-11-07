@@ -7,6 +7,8 @@
 <div class="card stat"><div class="n">{{ "%.1f"|format(w.book.heat_after_pct) }}%</div><div class="l">Open risk after (cap 6%)</div></div>
 <div class="card stat"><div class="n">{{ inr(w.book.cash_after) }}</div><div class="l">Cash after</div></div>
 </div>
+{% if w.funnel %}<h2>Funnel: from the Nifty 500 to this week's buys</h2>{% set week = w %}{% include "_funnel.html" %}
+<p><a class="btn" href="/weeks/{{w.week}}/screen">See every stock and its factors</a></p>{% endif %}
 <h2>Proposed changes</h2>
 {% if w.changes %}
 <form method="post" action="/weeks/{{w.week}}/signoff">
@@ -27,7 +29,7 @@
 <div class="row"><input type="text" name="note" placeholder="Note for the journal (optional)" style="flex:1;min-width:220px">
 <button class="primary" name="action" value="signoff">Sign off ticked changes</button>
 <button class="danger" name="action" value="reject_all">Reject all</button></div></div>
-{% else %}<p class="small">{% if w.signed_off_by %}Signed off by {{w.signed_off_by}} at {{w.signed_off[:16].replace('T',' ')}} UTC. {{w.note}}{% elif w.superseded_by %}Superseded by week {{w.superseded_by}} before sign-off.{% endif %}</p>{% endif %}
+{% else %}<p class="small">{% if w.signed_off_by %}Signed off by {{w.signed_off_by}} on {{w.signed_off|ist}}. {{w.note}}{% elif w.superseded_by %}Superseded by week {{w.superseded_by}} before sign-off.{% endif %}</p>{% endif %}
 </form>
 {% else %}<div class="card empty">No changes proposed this week. {% if w.status=='pending' %}<form method="post" action="/weeks/{{w.week}}/signoff"><input type="hidden" name="note" value="no changes"><button class="primary" name="action" value="signoff">Sign off (no changes)</button></form>{% endif %}</div>{% endif %}
 

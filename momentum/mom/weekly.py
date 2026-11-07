@@ -52,7 +52,13 @@ def build(px: dict, sectors: dict, store, today: date) -> dict:
     m = strategy.rank_universe(m, cfg, quality or None, sectors)
     proposal = strategy.propose(m, book, reg, cfg, today=today)
     proposal["regime"] = reg
-    proposal["quality_source"] = f"{len(quality)} stocks from the uploaded Screener export" if quality else "none uploaded"
+    proposal["funnel"] = strategy.funnel(m) + proposal.pop("funnel_tail")
+    proposal["screen"] = strategy.screen_rows(m, proposal.pop("setups"))
+    proposal["factors"] = [{"key": k, "label": l} for k, l in m.attrs["factors"]]
+    fmeta = store.get("control", "fundamentals") or {}
+    proposal["quality_source"] = (f"{len(quality)} stocks from the Screener export uploaded {fmeta.get('imported', '')}"
+                                  if quality else "none uploaded")
+    proposal["fundamentals_imported"] = fmeta.get("imported") if quality else None
     return proposal, m, book
 
 
@@ -76,17 +82,20 @@ def run(force: bool = False, px: dict | None = None, sectors: dict | None = None
 
     t0 = time.monotonic()
     store.set("mom_runs", run_id, {"status": "running", "started": now_iso(), "week": wid})
+    universe_updated = now_iso()
     try:
         if sectors is None:
             try:
                 sectors = mdata.nifty500_constituents()
-                store.set("mom_universe", "current", {"symbols": sectors, "updated": now_iso()})
+                universe_updated = now_iso()
+                store.set("mom_universe", "current", {"symbols": sectors, "updated": universe_updated})
             except Exception as exc:
                 cached = store.get("mom_universe", "current")
                 if not cached:
                     raise
                 log.warning("using cached Nifty 500 list from %s: %s", cached.get("updated"), exc)
                 sectors = cached["symbols"]
+                universe_updated = cached.get("updated")
         log.info("universe: %d symbols", len(sectors))
         if px is None:
             px = mdata.prices(sorted(sectors))
@@ -103,9 +112,12 @@ def run(force: bool = False, px: dict | None = None, sectors: dict | None = None
         for w in store.list("mom_weeks", where=[("status", "==", "pending")]):
             if w["id"] != wid:
                 store.set("mom_weeks", w["id"], {"status": "superseded", "superseded_by": wid}, merge=True)
+        screen = {"week": wid, "factors": proposal.pop("factors"), "rows": proposal.pop("screen"), "created": now_iso()}
         doc = {"week": wid, "status": "pending", "created": now_iso(), "run_id": run_id,
-               "data_as_of": str(px["close"].index[-1].date()), **proposal}
+               "data_as_of": str(px["close"].index[-1].date()), "universe_updated": universe_updated,
+               "prices_count": int(px["close"].shape[1]), "universe_count": len(sectors), **proposal}
         store.set("mom_weeks", wid, doc)
+        store.set("mom_screens", wid, screen)
         store.set("mom_perf", wid, {"week": wid, "value": proposal["book"]["value"],
                                     "nifty500": float(px["nifty500"].iloc[-1]), "nifty50": float(px["nifty50"].iloc[-1])})
         summary = {"week": wid, "regime": proposal["regime"]["regime"], "changes": len(proposal["changes"]),
