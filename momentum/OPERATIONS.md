@@ -66,10 +66,10 @@ to an older tag from `gcloud artifacts docker images list $REGION-docker.pkg.dev
 
 ## Running and checking the weekly job
 
-- **Run now:** use the portal's **Run the weekly review now** button, or
+- **Run now:** use the portal's **Run the weekly review now** button. It recomputes a pending week
+  but never rebuilds one you have signed off. To rebuild a signed-off week on purpose, run
   `gcloud run jobs execute mom-weekly --region=$REGION --wait --update-env-vars=MOM_FORCE=1`.
-  `MOM_FORCE=1` recomputes even a signed-off week. Don't use it after you've signed off unless you
-  mean to.
+  The book doesn't change, but the week goes back to pending, so don't sign off the same trades twice.
 - **Logs:**
   `gcloud logging read 'resource.type="cloud_run_job" AND resource.labels.job_name="mom-weekly"' --limit=80 --freshness=1d --format="value(textPayload)"`.
   The portal's **Runs** page shows the same log tail.
@@ -89,6 +89,21 @@ app's Redirect URL must be `https://mom-portal-685089913713.asia-south1.run.app/
 
 **Test order:** it places 1 LIQUIDBEES at 3% under its last price and cancels it straight away. If
 Kite ever shows it as COMPLETE, you simply hold 1 unit of LIQUIDBEES. Sell it or leave it parked.
+
+## Common changes
+
+- **Add a portal user:** add the Google account to `OWNER_EMAILS` in `config.env` and re-run
+  `deploy.sh`. That updates both the IAP access list and the portal's `MOM_ALLOWED_USERS` check.
+- **Correct the book:** if a fill was signed off wrongly, edit `mom_portfolio/Momentum` in the
+  Firestore console (qty, entry, stop, cash) and note why in `mom_journal`. Export first with
+  `gcloud firestore export gs://<bucket>/mom-backup --collection-ids=mom_portfolio,mom_journal,mom_weeks`.
+- **Add a filter:** add it to `strategy.factor_list` and to the checks in `strategy.rank_universe`
+  (any value it needs comes from `signals.metrics`). Give it a short label in `screen.html`, and add a
+  case to `tests/test_strategy.py`.
+- **Add a setting:** add a default to `config.DEFAULTS` and a label in `settings.html`. Saved settings
+  are merged over the defaults, so existing installs pick it up.
+- **Add a change type:** emit it in `strategy.propose`, apply it in `book.sign_off`, and label it in
+  `week.html`. Any order endpoint must follow the safety rules below.
 
 ## Troubleshooting
 
