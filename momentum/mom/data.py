@@ -49,13 +49,13 @@ def nifty500_constituents() -> dict[str, dict]:
     raise RuntimeError(f"could not download the Nifty 500 list: {last}")
 
 
-def _download(tickers: list[str], period: str) -> pd.DataFrame:
+def _download(tickers: list[str], period: str, threads: bool = True) -> pd.DataFrame:
     import yfinance as yf
 
     for attempt in range(4):
         try:
             df = yf.download(tickers, period=period, interval="1d", auto_adjust=True, group_by="column",
-                             threads=True, progress=False)
+                             threads=threads, progress=False)
             if df is not None and not df.empty:
                 return df
         except Exception as exc:
@@ -81,6 +81,18 @@ def prices(symbols: list[str], period: str = "2y", chunk: int = 80) -> dict[str,
                     sub = sub.to_frame(batch[0])
                 parts[k].append(sub)
         time.sleep(1)
+    # Threaded downloads occasionally lose a symbol to yfinance's sqlite cache lock; retry those serially
+    got = set()
+    for f in parts["Close"]:
+        got |= {c for c in f.columns if f[c].notna().any()}
+    missing = [f"{s}.NS" for s in symbols if f"{s}.NS" not in got]
+    if missing:
+        df = _download(missing, period, threads=False)
+        if not df.empty:
+            for k in parts:
+                if k in df.columns.get_level_values(0):
+                    sub = df[k]
+                    parts[k].append(sub.to_frame(missing[0]) if isinstance(sub, pd.Series) else sub)
     out = {}
     for k, frames in parts.items():
         wide = pd.concat(frames, axis=1) if frames else pd.DataFrame()
