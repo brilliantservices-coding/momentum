@@ -54,3 +54,10 @@ def test_funnel_page(env):
     home = c.get("/").text
     assert "Screened (fundamentals loaded)" in home and "IST" in home
     assert "UTC" not in home and "UTC" not in c.get("/data").text
+
+
+def test_stock_links_to_yahoo():
+    from portal.app import stock_link
+    assert 'href="https://finance.yahoo.com/quote/ALPHA.NS/"' in stock_link("ALPHA", "Alpha <Ltd>")
+    assert "Alpha &lt;Ltd&gt;" in stock_link("ALPHA", "Alpha <Ltd>")
+    assert "522101.BO" in stock_link("522101")

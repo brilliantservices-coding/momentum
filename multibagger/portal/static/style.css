@@ -44,3 +44,5 @@ input[type=text],input[type=file],textarea{font:inherit;font-size:13px;padding:6
 .funnel .fbar i{display:block;height:100%;background:var(--accent)}
 .split{display:flex;height:8px;border-radius:4px;overflow:hidden;background:var(--chip)}.split .g{background:var(--good)}.split .r{background:var(--bad)}
 @media (max-width:600px){.funnel .fstep{grid-template-columns:1fr 60px}.funnel .fbar{grid-column:1/-1;grid-row:2}}
+a.ext{color:inherit;text-decoration:underline dotted}
+a.ext:hover{color:var(--accent,#2563eb)}

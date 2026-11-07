@@ -33,6 +33,21 @@ app = FastAPI(title="Multibagger control plane", docs_url=None, redoc_url=None)
 app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
 templates = Jinja2Templates(directory=HERE / "templates")
 templates.env.filters["ist"] = ist
+
+
+def stock_link(symbol, name=None):
+    """A company's name (or symbol) linking to its Yahoo Finance page; BSE-only codes use .BO."""
+    from markupsafe import Markup, escape
+    sym = str(symbol or "").strip().upper()
+    if not sym:
+        return escape(name or "")
+    suffix = "BO" if sym.isdigit() else "NS"
+    url = f"https://finance.yahoo.com/quote/{quote(sym)}.{suffix}/"
+    return Markup(f'<a class="ext" href="{url}" target="_blank" rel="noopener" title="Open on Yahoo Finance">'
+                  f'{escape(name or sym)} ↗</a>')
+
+
+templates.env.globals["stock_link"] = stock_link
 OPEN_PATHS = {"/healthz", "/hooks/budget"}
 
 
