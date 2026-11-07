@@ -17,23 +17,23 @@ ALIASES: dict[str, list[str]] = {
     "name": ["name", "company", "company name", "stock", "stock name"],
     "price": ["current price", "cmp", "price", "cmp rs", "ltp", "current price rs"],
     "mcap": ["market capitalization", "market cap", "mar cap rs cr", "mcap", "market cap rs cr"],
-    "pe": ["price to earning", "pe", "p e", "price to earnings"],
-    "sales_cagr_3y": ["sales growth 3years", "sales growth 3 years", "revenue cagr 3y", "sales cagr 3y"],
-    "profit_cagr_3y": ["profit growth 3years", "profit growth 3 years", "profit cagr 3y"],
-    "qtr_sales_yoy": ["yoy quarterly sales growth", "qtr sales var", "qtr sales var percent", "quarterly sales growth yoy"],
-    "roce": ["return on capital employed", "roce", "roce percent"],
-    "roce_3y_avg": ["average return on capital employed 3years", "roce 3yr avg", "average roce 3years", "roce ann 3y avg"],
+    "pe": ["price to earning", "pe", "p e", "price to earnings", "pe ttm"],
+    "sales_cagr_3y": ["revenue annual 3yr growth", "sales growth 3years", "sales growth 3 years", "revenue cagr 3y", "sales cagr 3y"],
+    "profit_cagr_3y": ["net profit 3yr growth", "net profit annual 3yr growth", "profit growth 3years", "profit growth 3 years", "profit cagr 3y"],
+    "qtr_sales_yoy": ["revenue growth qtr yoy", "yoy quarterly sales growth", "qtr sales var", "qtr sales var percent", "quarterly sales growth yoy"],
+    "roce": ["return on capital employed", "roce", "roce percent", "roce annual"],
+    "roce_3y_avg": ["average return on capital employed 3years", "roce 3yr avg", "average roce 3years", "roce ann 3y avg", "roce annual 3yr avg"],
     "cfo_3y": ["operating cash flow 3years", "cash from operations 3years", "cfo 3y"],
     "ebitda_3y": ["ebitda 3years", "ebitda 3y"],
     "profit_3y": ["net profit 3years", "profit after tax 3years", "pat 3y"],
-    "ebitda": ["ebitda", "ebitda last year"],
-    "debt": ["debt", "borrowings", "total debt"],
-    "cash": ["cash equivalents", "cash", "cash and equivalents"],
-    "debt_to_equity": ["debt to equity", "d e", "lt debt to equity ann", "total debt to equity ann"],
+    "ebitda": ["ebitda", "ebitda last year", "ebitda annual"],
+    "debt": ["debt", "borrowings", "total debt", "total debt annual"],
+    "cash": ["cash equivalents", "cash", "cash and equivalents", "cash plus cash equivalents annual"],
+    "debt_to_equity": ["debt to equity", "d e", "lt debt to equity ann", "total debt to equity ann", "total debt to total equity annual"],
     "shares_now": ["number of equity shares", "no of equity shares"],
     "shares_3y_back": ["number of equity shares 3years back", "number of equity shares 3 years back"],
-    "promoter": ["promoter holding", "promoter holding percent", "promoters"],
-    "promoter_change": ["change in promoter holding", "change in promoter holding 3years"],
+    "promoter": ["promoter holding", "promoter holding percent", "promoters", "promoter holding latest"],
+    "promoter_change": ["change in promoter holding", "change in promoter holding 3years", "promoter holding change 4qtr"],
     "pledge": ["pledged percentage", "pledge", "pledged percent", "promoter pledge",
                "promoter holding pledge percentage qtr", "promoter pledge percentage qtr"],
     "pledge_prev": ["pledged percentage preceding quarter", "pledged percentage preceding year"],
@@ -41,11 +41,16 @@ ALIASES: dict[str, list[str]] = {
     "debtor_days_3y_back": ["debtor days 3years back", "debtor days 3 years back"],
     "inventory_days": ["inventory days"],
     "contingent_liabilities": ["contingent liabilities"],
-    "net_worth": ["net worth", "networth", "shareholders funds"],
-    "cwip": ["capital work in progress", "cwip"],
-    "cwip_prev": ["capital work in progress preceding year", "cwip preceding year"],
+    "net_worth": ["net worth", "networth", "shareholders funds", "total shareholders funds annual"],
+    "cwip": ["capital work in progress", "cwip", "capital work in progress annual"],
+    "cwip_prev": ["capital work in progress annual 1yr ago", "capital work in progress annual 1 yr ago", "capital work in progress 1yr ago", "capital work in progress preceding year", "cwip preceding year"],
     "avg_traded_value_cr": ["average daily traded value", "avg traded value rs cr"],
-    "volume_1m_avg": ["volume 1month average", "volume 1 month average", "avg volume 1m"],
+    # Inputs used only to derive the fields above (Trendlyne has no direct debtor/inventory days).
+    "revenue_annual": ["operating revenue annual", "revenue annual", "sales annual"],
+    "receivables": ["trade receivables annual", "trade receivables"],
+    "inventory_turnover": ["inventory turnover ratio annual", "inventory turnover ratio"],
+    "pledge_change_qoq": ["promoter pledge change qoq"],
+    "volume_1m_avg": ["month volume avg", "volume 1month average", "volume 1 month average", "avg volume 1m"],
 }
 
 
@@ -65,12 +70,37 @@ def _num(v):
         return None
 
 
+DERIVED_INPUTS = {"revenue_annual", "receivables", "inventory_turnover", "pledge_change_qoq"}
+_KEY_HEADERS = {"nse code", "nse symbol", "symbol", "stock name", "name", "company name"}
+
+
+def _read(data: bytes, filename: str) -> pd.DataFrame:
+    """Reads CSV/XLSX; if the first row isn't the header (report title rows), finds the header row."""
+    excel = filename.lower().endswith((".xlsx", ".xls"))
+    df = pd.read_excel(io.BytesIO(data)) if excel else pd.read_csv(io.BytesIO(data))
+    if {_norm(c) for c in df.columns} & _KEY_HEADERS:
+        return df
+    for i, row in df.head(15).iterrows():
+        if {_norm(v) for v in row.tolist() if isinstance(v, str)} & _KEY_HEADERS:
+            skip = i + 1
+            return pd.read_excel(io.BytesIO(data), skiprows=skip) if excel else pd.read_csv(io.BytesIO(data), skiprows=skip)
+    return df
+
+
+def _derive(rec: dict) -> None:
+    rev, ar, turn = rec.pop("revenue_annual", None), rec.pop("receivables", None), rec.pop("inventory_turnover", None)
+    if rec.get("debtor_days") is None and ar is not None and rev:
+        rec["debtor_days"] = round(365 * ar / rev, 1) if rev > 0 else None
+    if rec.get("inventory_days") is None and turn:
+        rec["inventory_days"] = round(365 / turn, 1) if turn > 0 else None
+    chg = rec.pop("pledge_change_qoq", None)
+    if rec.get("pledge_prev") is None and chg is not None and rec.get("pledge") is not None:
+        rec["pledge_prev"] = max(0.0, rec["pledge"] - chg)
+
+
 def parse(data: bytes, filename: str) -> tuple[dict[str, dict], dict]:
     """Returns ({symbol: metrics}, report) where report lists recognised and missing metrics."""
-    if filename.lower().endswith((".xlsx", ".xls")):
-        df = pd.read_excel(io.BytesIO(data))
-    else:
-        df = pd.read_csv(io.BytesIO(data))
+    df = _read(data, filename)
     cols = {_norm(c): c for c in df.columns}
     mapping = {}
     for metric, names in ALIASES.items():
@@ -91,10 +121,12 @@ def parse(data: bytes, filename: str) -> tuple[dict[str, dict], dict]:
         key = re.sub(r"[/\s]+", "_", key)
         if not key or key == "NAN":
             continue
+        _derive(rec)
         if rec.get("avg_traded_value_cr") is None and rec.get("volume_1m_avg") and rec.get("price"):
             rec["avg_traded_value_cr"] = rec["volume_1m_avg"] * rec["price"] / 1e7
         out[key] = rec
-    report = {"rows": len(out), "recognised": sorted(mapping), "missing": sorted(set(ALIASES) - set(mapping))}
+    report = {"rows": len(out), "recognised": sorted(set(mapping) - DERIVED_INPUTS),
+              "missing": sorted(set(ALIASES) - set(mapping) - DERIVED_INPUTS)}
     return out, report
 
 
