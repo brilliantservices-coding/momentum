@@ -144,14 +144,17 @@ fi
 say "Monthly budget: $BUDGET_AMOUNT $BUDGET_CURRENCY with alerts at 50/90/100% and the kill switch"
 BUDGET_ID=$($G billing budgets list --billing-account="$BILLING_ACCOUNT" \
   --filter="displayName=mb-monthly-$PROJECT_ID" --format='value(name)' | head -1)
-BUDGET_FLAGS=(--budget-amount="${BUDGET_AMOUNT}${BUDGET_CURRENCY}" --threshold-rule=percent=0.5
-  --threshold-rule=percent=0.9 --threshold-rule=percent=1.0
+BUDGET_FLAGS=(--budget-amount="${BUDGET_AMOUNT}${BUDGET_CURRENCY}"
   --notifications-rule-pubsub-topic="projects/$PROJECT_ID/topics/mb-budget")
+# On re-runs only the amount and topic are refreshed: `budgets update` rejects --threshold-rule, and
+# with --filter-labels (gcloud 575) it crashes with YAMLStreamError. The label filter and the
+# 50/90/100% thresholds set at creation stay in place.
 if [ -n "$BUDGET_ID" ]; then
-  $G billing budgets update "$BUDGET_ID" --billing-account="$BILLING_ACCOUNT" --filter-labels="$LABELS" "${BUDGET_FLAGS[@]}" >/dev/null
+  $G billing budgets update "$BUDGET_ID" --billing-account="$BILLING_ACCOUNT" "${BUDGET_FLAGS[@]}" >/dev/null
 else
   $G billing budgets create --billing-account="$BILLING_ACCOUNT" --display-name="mb-monthly-$PROJECT_ID" \
-    --filter-projects="projects/$PROJECT_ID" --filter-labels="$LABELS" "${BUDGET_FLAGS[@]}" >/dev/null
+    --filter-projects="projects/$PROJECT_ID" --filter-labels="$LABELS" "${BUDGET_FLAGS[@]}" \
+    --threshold-rule=percent=0.5 --threshold-rule=percent=0.9 --threshold-rule=percent=1.0 >/dev/null
 fi
 
 say "Done"
