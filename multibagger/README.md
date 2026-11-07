@@ -11,7 +11,8 @@ action and places any order manually. Nothing here talks to a broker. Educationa
 | Universe builder | Mon 06:00 | NSE equity list into `universe/` |
 | Ingestion | Mon, Thu 19:30 | Loads NSE announcement CSVs (desktop task or portal upload) into `filings/` and flags red-flag keywords |
 | Forensic | Mon, Thu 20:00 | Red-flag checklist on fundamentals and new filings into `alerts/` |
-| Screener | Sat 07:00 | Pass 1 screen on the uploaded fundamentals export into `candidates/` |
+| Fundamentals | Fri 20:00 | Growth, ROCE, cash flow, debt, holdings and working capital for the NSE universe from Yahoo Finance into `fundamentals/`, then the structured red-flag checks (no pledge data on Yahoo; a Screener export upload fills it) |
+| Screener | Sat 07:00 | Pass 1 screen on `fundamentals/` into `candidates/` |
 
 Phase 2 research agents (Claude). They ship **paused**: press Run now once, check the output, then
 Resume schedule.
