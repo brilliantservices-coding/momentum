@@ -7,7 +7,7 @@
 <td><span class="pill {{'on' if s.tier in ('A','B') else 'off' if s.tier=='Reject' else ''}}">{{s.tier}}</span></td>
 <td class="small">{{s.archetype or ''}}</td>
 <td class="small">{% if s.redteam_needed %}waiting{% elif s.redteamed %}<a href="/research/{{s.id}}#redteam">{{ '%+.1f'|format(s.redteam_adjustment or 0) }}</a>{% else %}–{% endif %}</td>
-<td class="small">{{(s.analysed or '')[:10]}}</td></tr>{% endfor %}</table></div>
+<td class="small">{{s.analysed|ist('%d %b %Y')}}</td></tr>{% endfor %}</table></div>
 {% else %}<div class="card empty">No scores yet. Run the Company analyst from the <a href="/">Overview</a> once the watchlist has survivors.</div>{% endif %}
 <h2>Themes</h2>
 {% if themes %}<div class="tablewrap"><table><tr><th>Theme</th><th>Total /30</th><th>Runway</th><th>Policy</th><th>Capital cycle</th><th>Breadth</th><th>Narrative</th><th>Valuation</th><th>Bottleneck</th></tr>

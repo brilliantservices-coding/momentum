@@ -1,7 +1,7 @@
 {% extends "base.html" %}{% block body %}
 <h1>Costs</h1><p class="sub">Month-to-date GCP spend, from Cloud Billing budget notifications (they arrive a few times a day and lag actual usage by up to a day).</p>
 <div class="card"><div class="stat"><div class="n">{% if cost.cost is not none %}{{ "%.2f"|format(cost.cost) }}{% else %}No data yet{% endif %}</div>
-<div class="l">{{cost.currency}} of {{ "%.0f"|format(cost.budget) }} budget for {{cost.month}}{% if cost.updated %} · updated {{cost.updated[:16].replace('T',' ')}} UTC{% endif %}</div></div>
+<div class="l">{{cost.currency}} of {{ "%.0f"|format(cost.budget) }} budget for {{cost.month}}{% if cost.updated %} · updated {{cost.updated|ist}}{% endif %}</div></div>
 {% if cost.pct is not none %}<div class="bar"><i class="{{'bad' if cost.pct>=90 else 'warn' if cost.pct>=50 else ''}}" style="width:{{ [cost.pct,100]|min }}%"></i></div>{% endif %}
 <p class="small">Email alerts go out at 50%, 90% and 100%. At 100% the kill switch pauses every schedule automatically. Release it on the Overview once you've raised the budget or the month rolls over.</p>
 {% if settings.project %}<p class="small"><a href="https://console.cloud.google.com/billing/budgets?project={{settings.project}}" target="_blank" rel="noopener">Budgets in the console</a> · <a href="https://console.cloud.google.com/billing/reports?project={{settings.project}}" target="_blank" rel="noopener">Billing reports</a></p>{% endif %}</div>

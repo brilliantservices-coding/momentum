@@ -135,3 +135,29 @@ def conviction(families: dict, hard_flags: int = 0, soft_flags: int = 0) -> dict
     total = round(min(total, 100), 1)
     tier = next((t for cut, t in TIERS if total >= cut), "Reject")
     return {"score": total, "tier": tier, "families": pts, "strong_families": strong, "notes": notes}
+
+
+RULE_LABELS = {"growth": "Growth (3y sales CAGR 15%+ or quarterly YoY 25%+)", "roce": "ROCE 15%+ (or 10%+ and rising 5 pts)",
+               "cash_conversion": "Cash conversion (3y CFO / EBITDA 70%+)",
+               "balance_sheet": "Balance sheet (net debt / EBITDA under 2, dilution under 10%)",
+               "promoter": "Promoter (holding 40%+, pledge under 5%, not selling)",
+               "valuation": "Valuation (P/E at most 1.5x growth)", "working_capital": "Working capital (debtor days not rising)"}
+GATE_LABELS = {"mcap_range": "Market cap ₹500-20,000 cr", "liquidity": "Liquidity ₹1 cr+/day traded"}
+
+
+def pass1_reasons(c: dict) -> list[str]:
+    """Why a screened company did not pass, in funnel order (empty list when it passed)."""
+    out = []
+    for g, ok in (c.get("gates") or {}).items():
+        if ok is False:
+            out.append(f"fails {GATE_LABELS.get(g, g)}")
+    known, met = c.get("known") or 0, c.get("met") or 0
+    if known < 4:
+        out.append(f"only {known} of 7 rules have data (needs 4)")
+    else:
+        need = max(4, math.ceil(0.7 * known))
+        if met < need:
+            out.append(f"met {met} of {known} rules (needs {need})")
+    if c.get("blocked_by"):
+        out.append(c["blocked_by"])
+    return out

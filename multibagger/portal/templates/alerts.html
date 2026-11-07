@@ -3,7 +3,7 @@
 <div class="row" style="margin-bottom:12px">{% for s in ["open","confirmed","dismissed"] %}<a class="btn" href="/alerts?status={{s}}" {% if s==status %}style="border-color:var(--accent)"{% endif %}>{{s|capitalize}}</a>{% endfor %}</div>
 {% if rows %}<div class="tablewrap"><table><tr><th>Severity</th><th>Company</th><th>Flag</th><th>Detail</th><th>Source</th><th></th></tr>
 {% for a in rows %}<tr><td><span class="pill {{a.severity}}">{{a.severity}}</span></td><td><strong>{{a.symbol}}</strong><br><span class="small">{{a.name or ''}}</span></td>
-<td>{{a.rule.replace('_',' ')}}</td><td>{{a.detail}}</td><td class="small">{{a.source}}{% if a.link %}<br><a href="{{a.link}}" target="_blank" rel="noopener">document</a>{% endif %}<br>{{a.created[:10]}}</td>
+<td>{{a.rule.replace('_',' ')}}</td><td>{{a.detail}}</td><td class="small">{{a.source}}{% if a.link %}<br><a href="{{a.link}}" target="_blank" rel="noopener">document</a>{% endif %}<br>{{a.created|ist}}</td>
 <td>{% if status=="open" %}<form method="post" action="/alerts/{{a.id}}"><input type="hidden" name="status" value="confirmed"><button>Confirm</button></form>
 <form method="post" action="/alerts/{{a.id}}"><input type="hidden" name="status" value="dismissed"><button>Dismiss</button></form>
 {% else %}<span class="small">{{a.reviewed_by}}</span>{% endif %}</td></tr>{% endfor %}</table></div>
