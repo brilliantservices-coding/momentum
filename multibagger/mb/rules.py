@@ -105,3 +105,33 @@ def filing_flags(text: str) -> list[dict]:
     t = (text or "").lower()
     return [{"rule": r, "severity": sev, "detail": next(p for p in phrases if p in t)}
             for r, sev, phrases in FILING_RULES if any(p in t for p in phrases)]
+
+
+# ---- Conviction score (strategy doc: "Combining signals into a confidence score") ----
+WEIGHTS = {"theme": 15, "financial": 20, "management": 20, "visibility": 15, "ecosystem": 10,
+           "valuation": 10, "governance": 10}
+TIERS = [(80, "A"), (65, "B"), (50, "C")]
+SIZING = {"A": (4.0, 8.0), "B": (2.5, 5.0), "C": (1.0, 2.0)}  # starter %, max % of portfolio (cost)
+
+
+def conviction(families: dict, hard_flags: int = 0, soft_flags: int = 0) -> dict:
+    """families: {name: points awarded (0..weight)}. Applies caps, agreement bonus/cap, hard-flag zero."""
+    pts = {k: max(0.0, min(float(families.get(k) or 0), w)) for k, w in WEIGHTS.items()}
+    total = sum(pts.values())
+    strong = sum(1 for k, w in WEIGHTS.items() if pts[k] > 0.7 * w)
+    notes = []
+    if strong >= 5:
+        total += 5
+        notes.append("agreement bonus +5 (5+ families above 70% of weight)")
+    elif strong < 3 and total > 60:
+        total = 60
+        notes.append("capped at 60 (fewer than 3 families above 70% of weight)")
+    if hard_flags:
+        total = 0
+        notes.append("hard red flag: score set to 0")
+    elif soft_flags >= 3:
+        total = 0
+        notes.append("3+ soft red flags: reject")
+    total = round(min(total, 100), 1)
+    tier = next((t for cut, t in TIERS if total >= cut), "Reject")
+    return {"score": total, "tier": tier, "families": pts, "strong_families": strong, "notes": notes}

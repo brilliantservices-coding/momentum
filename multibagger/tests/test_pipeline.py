@@ -10,15 +10,6 @@ Gamma Large,GAMMA,2000,90000,30,15,15,25,900,1000,700,400,0,100,60,0,0,30,30,900
 """
 
 
-@pytest.fixture()
-def env(tmp_path, monkeypatch):
-    import mb.blob
-    import mb.store
-    monkeypatch.setattr(mb.store, "_store", mb.store.LocalStore(tmp_path))
-    monkeypatch.setattr(mb.blob, "_blob", mb.blob.LocalBlob(tmp_path))
-    return mb.store._store, mb.blob._blob
-
-
 def test_import_forensic_screen(env):
     import logging
 

@@ -25,3 +25,40 @@ agents:
     schedule: "0 7 * * 6"        # Saturdays 07:00
     cadence: weekly
     phase: 1
+
+  # ---- Phase 2: AI research agents. Shipped switched off: run one from the portal first, then resume its schedule.
+  - id: theme
+    name: Theme analyst
+    description: Scores 25-40 Indian structural themes on the six dimensions and marks the 6-10 active ones.
+    schedule: "0 8 1 1,4,7,10 *"   # quarterly, 1st of Jan/Apr/Jul/Oct 08:00
+    cadence: quarterly
+    phase: 2
+    default_enabled: false
+  - id: extraction
+    name: Extraction agent
+    description: Turns watchlist filings (and their PDFs when reachable) into cited facts such as guidance, capex, orders and auditor remarks.
+    schedule: "0 21 * * 1,4"       # Mon and Thu 21:00, after ingestion
+    cadence: twice weekly
+    phase: 2
+    default_enabled: false
+  - id: analyst
+    name: Company analyst
+    description: Writes the thesis memo, bull/base/bear values and the seven-family conviction score for watchlist names.
+    schedule: "0 9 * * 6"          # Saturdays 09:00, after the screener
+    cadence: weekly
+    phase: 2
+    default_enabled: false
+  - id: redteam
+    name: Red-team agent
+    description: Argues the bear case for every tier A and B name and can lower its score by up to 15 points.
+    schedule: "0 11 * * 6"         # Saturdays 11:00
+    cadence: weekly
+    phase: 2
+    default_enabled: false
+  - id: portfolio
+    name: Portfolio agent
+    description: Turns scores into buy-starter and exit tickets on the Approvals page. Never places orders.
+    schedule: "0 12 * * 6"         # Saturdays 12:00
+    cadence: weekly
+    phase: 2
+    default_enabled: false

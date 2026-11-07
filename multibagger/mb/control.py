@@ -89,7 +89,7 @@ def kill_all(reason: str, by: str) -> None:
     store.set("control", "global", {"killed": True, "reason": reason, "at": now_iso(), "by": by})
     for a in load_agents():
         if not already:  # remember what to resume when the switch is released
-            enabled_before = (store.get("agents", a["id"]) or {}).get("enabled", True)
+            enabled_before = (store.get("agents", a["id"]) or {}).get("enabled", a.get("default_enabled", True))
             store.set("agents", a["id"], {"enabled_before_kill": enabled_before}, merge=True)
         set_enabled(a["id"], False, by=by)
         try:
@@ -102,7 +102,7 @@ def release_kill(by: str) -> None:
     store = get_store()
     store.set("control", "global", {"killed": False, "reason": None, "at": now_iso(), "by": by})
     for a in load_agents():
-        if (store.get("agents", a["id"]) or {}).get("enabled_before_kill", True):
+        if (store.get("agents", a["id"]) or {}).get("enabled_before_kill", a.get("default_enabled", True)):
             set_enabled(a["id"], True, by=by)
 
 
