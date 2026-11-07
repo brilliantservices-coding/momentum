@@ -168,3 +168,18 @@ def test_refresh_plan_skips_and_light_refreshes(env):
     assert sorted(calls) == [("ALPHA", True), ("RESULTS", False)]
     a = store.get("fundamentals", "ALPHA")
     assert a["price"] == 600.0 and a["roce"] is not None  # light refresh kept the statement fields
+
+
+def test_yahoo_run_stops_when_refused(env, monkeypatch):
+    from mb.agents import fundamentals as agent
+    store, _ = env
+    monkeypatch.setattr(agent, "PAUSE_S", 0)
+    for i in range(40):
+        store.set("universe", f"S{i}", {"symbol": f"S{i}"})
+    calls = []
+
+    def refuse(sym, lo, hi, light=False):
+        calls.append(sym)
+        raise RuntimeError("HTTP Error 401: Unauthorized Invalid Crumb")
+    out = agent.run(store=store, log=logging.getLogger("t"), fetch=refuse)
+    assert out["yahoo_cut_off"] and not out["complete"] and len(calls) < 40

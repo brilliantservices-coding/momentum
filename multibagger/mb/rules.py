@@ -20,7 +20,7 @@ def pass1(m: dict) -> dict:
     rules["roce"] = None if roce is None else bool(roce >= 15 or (roce_avg is not None and roce >= 10 and roce - roce_avg >= 5))
 
     cfo, ebitda3 = g("cfo_3y"), g("ebitda_3y")
-    rules["cash_conversion"] = None if cfo is None or not ebitda3 else bool(ebitda3 > 0 and cfo / ebitda3 >= 0.7)
+    rules["cash_conversion"] = None if cfo is None or not ebitda3 or is_financial(m) else bool(ebitda3 > 0 and cfo / ebitda3 >= 0.7)
 
     debt, cash, ebitda, de = g("debt"), g("cash"), g("ebitda"), g("debt_to_equity")
     lev = None
@@ -55,6 +55,16 @@ def pass1(m: dict) -> dict:
     return {"rules": rules, "gates": gates, "met": met, "known": len(known), "passed": passed}
 
 
+FINANCIAL_WORDS = ("bank", "financ", "nbfc", "insurance", "broker", "capital market", "asset management",
+                   "lending", "credit")
+
+
+def is_financial(m: dict) -> bool:
+    """Lenders and brokers: loan growth is an operating cash outflow, so the cash-conversion test doesn't apply."""
+    text = f"{m.get('sector') or ''} {m.get('industry') or ''}".lower()
+    return any(w in text for w in FINANCIAL_WORDS)
+
+
 def structured_flags(m: dict) -> list[dict]:
     """Red flags detectable from the fundamentals export. Each: {rule, severity, detail}."""
     flags = []
@@ -65,7 +75,8 @@ def structured_flags(m: dict) -> list[dict]:
         big = g("pledge") - g("pledge_prev") >= 5 or g("pledge") > 10  # small rises from a low base are soft
         flags.append({"rule": "pledge_rising", "severity": "hard" if big else "soft",
                       "detail": f"Pledge up from {g('pledge_prev'):.1f}% to {g('pledge'):.1f}%"})
-    if g("cfo_3y") is not None and (g("profit_3y") or 0) > 0 and g("cfo_3y") <= 0.1 * g("profit_3y"):
+    if g("cfo_3y") is not None and (g("profit_3y") or 0) > 0 and g("cfo_3y") <= 0.1 * g("profit_3y") \
+            and not is_financial(m):
         flags.append({"rule": "profit_without_cash", "severity": "hard",
                       "detail": f"3y operating cash flow {g('cfo_3y'):.0f} vs 3y profit {g('profit_3y'):.0f}"})
     if g("contingent_liabilities") is not None and g("net_worth") and g("contingent_liabilities") > 0.25 * g("net_worth"):

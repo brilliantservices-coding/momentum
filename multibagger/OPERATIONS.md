@@ -78,7 +78,9 @@ The token from `claude setup-token` lasts about a year. When AI runs fail with a
 
 ### Fundamentals sources
 - **Yahoo** (Fundamentals agent, Fri 20:00): no action needed. Tunables are env vars on the `mb-fundamentals` job:
-  `MB_YAHOO_WORKERS` (3), `MB_YAHOO_MAX_MINUTES` (150), `MB_YAHOO_LIMIT` (0 means all; set it for a quick test).
+  `MB_YAHOO_WORKERS` (1), `MB_YAHOO_PAUSE` (1.0 s between requests), `MB_YAHOO_MAX_MINUTES` (150),
+  `MB_YAHOO_LIMIT` (0 means all; set it for a quick test). Yahoo cuts off fast callers with "401 Invalid Crumb";
+  after 15 refusals in a row the run stops (`yahoo_cut_off: true` in the summary) and the rest go first next time.
   A run cut short by the time budget carries on from the oldest symbols next time. Each week only
   stocks with new results (seen in the filings) or statements older than 4 weeks get a full download;
   the rest get a one-request price/market-cap refresh, and stocks far outside ₹200-40,000 cr are checked monthly.
@@ -110,7 +112,7 @@ Prefer the portal buttons, which also update the Firestore flags the runner chec
 |---|---|
 | Agent shows **failed** | Portal → agent page → run's log. More detail: Cloud Run → Jobs → `mb-<agent>` → Logs. |
 | Screener: "no fundamentals loaded" | The Fundamentals agent hasn't run or failed. Run it, or upload an export. |
-| Fundamentals: many errors / 429 | Yahoo rate limiting. Lower `MB_YAHOO_WORKERS` to 1-2 on the job and run again. |
+| Fundamentals: many errors / 429 / Invalid Crumb | Yahoo rate limiting. Raise `MB_YAHOO_PAUSE` (e.g. 2) on the job and run again later. |
 | AI agent: "CLAUDE_CODE_OAUTH_TOKEN is not set" | Secret missing or not mounted. Store it, then redeploy. |
 | AI agent: authentication error | Token expired. Renew it (above). |
 | AI agent: "daily LLM cap reached" | Wait for tomorrow (UTC date) or raise the cap on Settings. |

@@ -15,6 +15,8 @@ ALIASES: dict[str, list[str]] = {
     "symbol": ["nse code", "nse symbol", "symbol", "ticker"],
     "bse_code": ["bse code"],
     "name": ["name", "company", "company name", "stock", "stock name"],
+    "sector": ["sector name", "sector"],
+    "industry": ["industry name", "industry"],
     "price": ["current price", "cmp", "price", "cmp rs", "ltp", "current price rs"],
     "mcap": ["market capitalization", "market cap", "mar cap rs cr", "mcap", "market cap rs cr"],
     "pe": ["price to earning", "pe", "p e", "price to earnings", "pe ttm", "pe ttm price to earnings"],
@@ -70,6 +72,7 @@ def _num(v):
         return None
 
 
+TEXT_FIELDS = ("symbol", "name", "bse_code", "sector", "industry")
 DERIVED_INPUTS = {"revenue_annual", "receivables", "inventory_turnover", "pledge_change_qoq"}
 _KEY_HEADERS = {"nse code", "nse symbol", "symbol", "stock name", "name", "company name"}
 
@@ -115,7 +118,7 @@ def parse(data: bytes, filename: str) -> tuple[dict[str, dict], dict]:
         rec = {}
         for metric, col in mapping.items():
             v = row.get(col)
-            if metric in ("symbol", "name", "bse_code"):
+            if metric in TEXT_FIELDS:
                 txt = str(v).strip() if v is not None and not pd.isna(v) else None
                 if txt and metric == "bse_code":
                     txt = re.sub(r"\.0+$", "", txt)  # Excel numbers come back as 522101.0
