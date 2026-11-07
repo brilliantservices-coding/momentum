@@ -15,7 +15,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from mom import control
+from mom import control, kite
 from mom.book import get_book, get_cfg, sign_off
 from mom.config import BOOK, DEFAULTS, REGIME_EXPOSURE, settings
 from mom.store import get_store, now_iso
@@ -239,6 +239,77 @@ async def settings_save(request: Request):
         book.update(cash=out["capital"], capital=out["capital"], peak_value=out["capital"])
         store.set("mom_portfolio", BOOK, book)
     return back("/settings", "Settings saved")
+
+
+def _liquid_ref_price(store) -> float | None:
+    w = _latest_week(store)
+    return (w or {}).get("liquid", {}).get("price")
+
+
+@app.get("/zerodha", response_class=HTMLResponse)
+def zerodha(request: Request):
+    store = get_store()
+    st, err = None, None
+    if kite.configured():
+        try:
+            st = kite.call("/status")
+        except kite.RelayError as exc:
+            err = str(exc)
+    last = store.get("mom_kite", "last") or {}
+    return render(request, "zerodha.html", configured=kite.configured(), status=st, error=err, last=last,
+                  ref_price=_liquid_ref_price(store))
+
+
+@app.get("/zerodha/login")
+def zerodha_login():
+    if not kite.configured():
+        return back("/zerodha", "The Zerodha connection is not set up yet.")
+    return RedirectResponse(kite.login_url(), status_code=303)
+
+
+@app.get("/kite/callback")
+def kite_callback(request: Request, request_token: str = "", status: str = ""):
+    """Kite redirects here after the daily login (set as the app's redirect URL)."""
+    if status != "success" or not request_token:
+        return back("/zerodha", "Zerodha login was cancelled or failed.")
+    try:
+        res = kite.call("/session", {"request_token": request_token})
+    except kite.RelayError as exc:
+        return back("/zerodha", f"Login failed: {exc}")
+    get_store().set("mom_audit", f"{now_iso()}-kite-login", {"at": now_iso(), "user": current_user(request),
+                                                           "action": "kite_login", "kite_user": res.get("user_id")})
+    return back("/zerodha", f"Connected to Zerodha as {res.get('user_id')} for today.")
+
+
+@app.post("/zerodha/check")
+def zerodha_check(request: Request):
+    store = get_store()
+    try:
+        res = kite.call("/check")
+    except kite.RelayError as exc:
+        return back("/zerodha", f"Check failed: {exc}")
+    store.set("mom_kite", "last", {**(store.get("mom_kite", "last") or {}), "check": res, "check_at": now_iso()})
+    return back("/zerodha", "Connection check passed.")
+
+
+@app.post("/zerodha/test-order")
+async def zerodha_test_order(request: Request):
+    store = get_store()
+    form = await request.form()
+    if form.get("confirm") != "on":
+        return back("/zerodha", "Tick the box to confirm the test order first.")
+    ref = _liquid_ref_price(store)
+    if not ref:
+        return back("/zerodha", "No LIQUIDBEES price yet: run the weekly review first.")
+    try:
+        res = kite.call("/test-order", {"reference_price": ref}, timeout=60)
+    except kite.RelayError as exc:
+        return back("/zerodha", f"Test order failed: {exc}")
+    store.set("mom_kite", "last", {**(store.get("mom_kite", "last") or {}), "test": res, "test_at": now_iso()})
+    store.set("mom_audit", f"{now_iso()}-kite-test", {"at": now_iso(), "user": current_user(request),
+                                                     "action": "kite_test_order", "order_id": res.get("order_id"),
+                                                     "final_status": res.get("final_status")})
+    return back("/zerodha", f"Test order {res.get('order_id')}: {res.get('final_status')}.")
 
 
 @app.get("/api/weeks/{wid}")
