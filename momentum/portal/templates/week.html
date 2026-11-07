@@ -1,0 +1,45 @@
+{% extends "base.html" %}{% from "_macros.html" import inr, pct, regime_pill %}{% block body %}
+<h1>Week ending {{w.week}} <span class="pill {{w.status}}">{{w.status|replace('_',' ')}}</span></h1>
+<p class="sub">Regime {{ regime_pill(w.regime.regime) }} · {{w.counts.passing}} stocks pass every filter · data as of {{w.data_as_of}} · quality data: {{w.quality_source}}</p>
+<div class="grid">
+<div class="card stat"><div class="n">{{ inr(w.book.value) }}</div><div class="l">Book value at Friday's close</div></div>
+<div class="card stat"><div class="n">{{ "%.0f"|format(w.book.exposure_after_pct) }}%</div><div class="l">In stocks after these changes (max {{ (exposure[w.regime.regime]*100)|int }}%)</div></div>
+<div class="card stat"><div class="n">{{ "%.1f"|format(w.book.heat_after_pct) }}%</div><div class="l">Open risk after (cap 6%)</div></div>
+<div class="card stat"><div class="n">{{ inr(w.book.cash_after) }}</div><div class="l">Cash after</div></div>
+</div>
+<h2>Proposed changes</h2>
+{% if w.changes %}
+<form method="post" action="/weeks/{{w.week}}/signoff">
+<div class="tablewrap"><table class="changes"><thead><tr><th>OK</th><th>Action</th><th>Stock</th><th>Qty</th><th>Price</th><th>Stop</th><th>Why</th></tr></thead><tbody>
+{% for c in w.changes %}{% set pending = w.status=='pending' %}{% set dec = (w.decisions or {}).get(c.id, {}) %}
+<tr><td data-label="OK">{% if pending %}<input type="checkbox" name="ok_{{c.id}}" checked aria-label="approve {{c.symbol}}">{% else %}{{ '<span class="tick">✓</span>'|safe if c.id in (w.applied or []) else '<span class="cross">✗</span>'|safe }}{% endif %}</td>
+<td data-label="Action"><span class="pill act-{{c.type}}">{{ {'buy':'Buy','sell':'Sell','trim':'Trim','raise_stop':'Raise stop'}[c.type] }}</span></td>
+<td data-label="Stock"><strong>{{c.symbol}}</strong>{% if c.sector %}<div class="small">{{c.sector}}</div>{% endif %}{% if c.rank %}<div class="small">rank {{c.rank}}</div>{% endif %}</td>
+<td data-label="Qty" class="num">{% if pending and c.type!='raise_stop' %}<input type="text" name="qty_{{c.id}}" value="{{c.qty}}" size="5" inputmode="numeric">{% else %}{{dec.qty or c.qty}}{% endif %}</td>
+<td data-label="Price" class="num">{% if pending and c.type!='raise_stop' %}<input type="text" name="price_{{c.id}}" value="{{c.price}}" size="8" inputmode="decimal" title="Enter your actual fill price">{% else %}{{dec.price or c.price}}{% endif %}
+{% if c.pnl_pct is not none and c.type=='sell' %}<div class="small">{{ pct(c.pnl_pct) }} vs entry {{c.entry}}</div>{% endif %}</td>
+<td data-label="Stop" class="num">{% if c.type=='buy' %}{% if pending %}<input type="text" name="stop_{{c.id}}" value="{{c.stop}}" size="8" inputmode="decimal">{% else %}{{dec.stop or c.stop}}{% endif %}<div class="small">risk {{c.risk_pct}}%</div>
+{% elif c.type=='raise_stop' %}{{c.stop}} → {% if pending %}<input type="text" name="stop_{{c.id}}" value="{{c.new_stop}}" size="8" inputmode="decimal">{% else %}{{dec.stop or c.new_stop}}{% endif %}{% endif %}</td>
+<td data-label="Why"><ul class="reasons">{% for r in c.reasons %}<li>{{r}}</li>{% endfor %}</ul></td></tr>{% endfor %}
+</tbody></table></div>
+{% if w.status=='pending' %}
+<div class="card" style="margin-top:12px"><p class="small" style="margin-top:0">Untick anything you don't want. Edit quantity and price to your actual fills before signing off; the {{book_name}} book is updated with exactly what you sign. Then place the orders yourself in Kite with the tag "{{book_name}}" and set stops as GTT orders.</p>
+<div class="row"><input type="text" name="note" placeholder="Note for the journal (optional)" style="flex:1;min-width:220px">
+<button class="primary" name="action" value="signoff">Sign off ticked changes</button>
+<button class="danger" name="action" value="reject_all">Reject all</button></div></div>
+{% else %}<p class="small">{% if w.signed_off_by %}Signed off by {{w.signed_off_by}} at {{w.signed_off[:16].replace('T',' ')}} UTC. {{w.note}}{% elif w.superseded_by %}Superseded by week {{w.superseded_by}} before sign-off.{% endif %}</p>{% endif %}
+</form>
+{% else %}<div class="card empty">No changes proposed this week. {% if w.status=='pending' %}<form method="post" action="/weeks/{{w.week}}/signoff"><input type="hidden" name="note" value="no changes"><button class="primary" name="action" value="signoff">Sign off (no changes)</button></form>{% endif %}</div>{% endif %}
+
+{% if w.holds %}<h2>Holdings kept</h2><div class="tablewrap"><table><thead><tr><th>Stock</th><th>Close</th><th>P&amp;L</th><th>Stop</th><th>Rank</th></tr></thead><tbody>
+{% for h in w.holds %}<tr><td>{{h.symbol}}</td><td class="num">{{h.close or '–'}}</td><td class="num">{{ pct(h.pnl_pct) }}</td><td class="num">{{h.stop or '–'}}</td><td class="num">{{h.rank or h.note}}</td></tr>{% endfor %}</tbody></table></div>{% endif %}
+
+{% if w.watchlist %}<h2>Watchlist (top ranked, no valid entry this week)</h2><div class="tablewrap"><table><thead><tr><th>Rank</th><th>Stock</th><th>Close</th><th>RS rating</th><th>Why not a buy</th></tr></thead><tbody>
+{% for s in w.watchlist %}<tr><td class="num">{{s.rank}}</td><td>{{s.symbol}}<div class="small">{{s.sector}}</div></td><td class="num">{{s.close}}</td><td class="num">{{s.rs_rating}}</td><td>{{s.note}}</td></tr>{% endfor %}</tbody></table></div>{% endif %}
+
+<h2>Ranking (stocks passing every filter)</h2>
+{% if w.ranking %}<div class="tablewrap"><table><thead><tr><th>#</th><th>Stock</th><th>Sector</th><th>Close</th><th>Score</th><th>RS 55</th><th>RS 123</th><th>RS rating</th><th>Weekly RSI</th></tr></thead><tbody>
+{% for r in w.ranking %}<tr{% if r.held %} class="held"{% endif %}><td class="num">{{r.rank}}</td><td>{{r.symbol}}{% if r.held %} <span class="pill">held</span>{% endif %}</td><td class="small">{{r.sector}}</td><td class="num">{{r.close}}</td><td class="num">{{r.score}}</td><td class="num">{{ pct(r.rs55) }}</td><td class="num">{{ pct(r.rs123) }}</td><td class="num">{{r.rs_rating}}</td><td class="num">{{r.rsi_w}}</td></tr>{% endfor %}</tbody></table></div>
+{% else %}<div class="card empty">No stock passes every filter this week.</div>{% endif %}
+<p class="small">Also check by hand before buying: NSE ASM/GSM lists, pledging, results dates, and the chart. Add anything to avoid to the exclusion list in Settings.</p>
+{% endblock %}

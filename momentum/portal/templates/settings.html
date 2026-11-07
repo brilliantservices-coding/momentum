@@ -1,0 +1,9 @@
+{% extends "base.html" %}{% block body %}
+<h1>Settings</h1><p class="sub">Strategy parameters. Defaults come from the strategy doc; changes apply from the next weekly run.</p>
+<form method="post" action="/settings" class="card settings">
+{% set labels = {"capital":"Starting capital (₹) — only changes the book while it has no trades","risk_pct":"Risk per new position (% of book)","max_positions":"Max positions","position_cap_pct":"Max per stock (% of book)","sector_cap_pct":"Max per sector (% of book)","heat_cap_pct":"Max total open risk (% of book)","max_stop_pct":"Max initial stop (% below entry)","buy_rank":"Buy only from the top N","exit_rank":"Sell when rank falls below","min_turnover_cr":"Min avg daily turnover (₹ crore)","rs_rating_min":"Min RS rating","extended_pct":"Extended if this % above pivot","exclude":"Never buy (ASM/GSM, red flags), comma separated"} %}
+{% for k, dv in defaults.items() %}<label><span>{{labels.get(k,k)}}</span>
+{% if k=="exclude" %}<textarea name="{{k}}" rows="2">{{cfg[k]}}</textarea>{% else %}<input type="text" name="{{k}}" value="{{cfg[k]}}" inputmode="decimal">{% endif %}
+<small>default {{dv if dv != "" else "none"}}</small></label>{% endfor %}
+<div><button class="primary">Save</button></div></form>
+{% endblock %}

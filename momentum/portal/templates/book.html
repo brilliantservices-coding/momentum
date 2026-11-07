@@ -1,0 +1,17 @@
+{% extends "base.html" %}{% from "_macros.html" import inr, pct %}{% block body %}
+<h1>{{book_name}} book</h1><p class="sub">This strategy's positions, kept apart from the rest of your account. It changes only when you sign off a week.</p>
+<div class="grid">
+<div class="card stat"><div class="n">{{ inr(totals.total) }}</div><div class="l">Value</div></div>
+<div class="card stat"><div class="n">{{ inr(totals.cash) }}</div><div class="l">Cash</div></div>
+<div class="card stat"><div class="n">{{ pct(totals.return_pct) }}</div><div class="l">Since start</div></div>
+<div class="card stat"><div class="n">{{ "%.1f"|format(totals.heat_pct) }}%</div><div class="l">Open risk</div></div>
+</div>
+<h2>Positions</h2>
+{% if rows %}<div class="tablewrap"><table><thead><tr><th>Stock</th><th>Qty</th><th>Entry</th><th>Last</th><th>P&amp;L</th><th>Stop</th><th>Value</th><th>Since</th></tr></thead><tbody>
+{% for r in rows %}<tr><td>{{r.symbol}}<div class="small">{{r.sector or ''}}</div></td><td class="num">{{r.qty}}</td><td class="num">{{r.entry}}</td><td class="num">{{r.last}}</td><td class="num">{{ pct(r.pnl_pct) }}</td><td class="num">{{r.stop}}</td><td class="num">{{ inr(r.value) }}</td><td class="small">{{r.entry_date}}</td></tr>{% endfor %}
+</tbody></table></div>{% else %}<div class="card empty">No positions yet.</div>{% endif %}
+<h2>Trade journal</h2>
+{% if journal %}<div class="tablewrap"><table><thead><tr><th>When</th><th>Action</th><th>Stock</th><th>Qty</th><th>Price</th><th>Result</th><th>By</th></tr></thead><tbody>
+{% for j in journal %}<tr><td class="small">{{j.at[:10]}}</td><td>{{j.type|replace('_',' ')}}</td><td>{{j.symbol}}</td><td class="num">{{j.qty}}</td><td class="num">{{j.price}}{% if j.stop %}<div class="small">stop {{j.stop}}</div>{% endif %}</td><td class="num">{% if j.pnl is defined %}{{ inr(j.pnl) }} {{ pct(j.pnl_pct) }}{% endif %}</td><td class="small">{{j.by}}</td></tr>{% endfor %}
+</tbody></table></div>{% else %}<div class="card empty">No trades signed off yet.</div>{% endif %}
+{% endblock %}
