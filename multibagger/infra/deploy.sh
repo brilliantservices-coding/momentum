@@ -33,7 +33,8 @@ gcloud components list --filter="id=beta" --format="value(state.name)" 2>/dev/nu
   gcloud components install beta --quiet || true
 $G services enable run.googleapis.com cloudscheduler.googleapis.com firestore.googleapis.com \
   storage.googleapis.com artifactregistry.googleapis.com cloudbuild.googleapis.com pubsub.googleapis.com \
-  billingbudgets.googleapis.com cloudbilling.googleapis.com iap.googleapis.com iam.googleapis.com
+  billingbudgets.googleapis.com cloudbilling.googleapis.com iap.googleapis.com iam.googleapis.com \
+  drive.googleapis.com
 
 say "Firestore (native mode, free tier applies to the default database)"
 exists $G firestore databases describe --database='(default)' || \
@@ -76,7 +77,8 @@ $G artifacts repositories set-cleanup-policies mb --location="$REGION" --policy=
 say "Building image $IMAGE (Cloud Build free tier)"
 $G builds submit --region="$REGION" --tag="$IMAGE" .
 
-COMMON_ENV="MB_BACKEND=gcp,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,MB_REGION=$REGION,MB_BUCKET=$BUCKET,MB_MONTHLY_BUDGET_INR=$BUDGET_AMOUNT"
+DRIVE_INBOX_ID="${DRIVE_INBOX_ID:-}"
+COMMON_ENV="MB_DRIVE_INBOX_ID=$DRIVE_INBOX_ID,MB_BACKEND=gcp,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,MB_REGION=$REGION,MB_BUCKET=$BUCKET,MB_MONTHLY_BUDGET_INR=$BUDGET_AMOUNT"
 
 say "Agent jobs and schedules"
 # Reads id/schedule pairs from agents.yaml without needing Python locally.

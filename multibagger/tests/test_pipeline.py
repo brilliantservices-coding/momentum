@@ -54,13 +54,66 @@ def test_announcements_upload_flow(env):
     store, blob = env
     blob.put("filings/inbox/a.csv", NSE_ANN)
     out = ingestion.run(store=store, log=logging.getLogger("t"))
-    assert out == {"files": 1, "new_filings": 3, "new_alerts": 2}
+    assert out == {"files": 1, "from_drive": 0, "new_filings": 3, "new_alerts": 2}
     assert blob.list("filings/inbox/") == [] and blob.list("filings/processed/") == ["filings/processed/a.csv"]
     hard = store.list("alerts", where=[("severity", "==", "hard")])
     assert [a["symbol"] for a in hard] == ["ALPHA"]
     blob.put("filings/inbox/b.csv", NSE_ANN)  # same rows again
     assert ingestion.run(store=store, log=logging.getLogger("t"))["new_filings"] == 0
     assert forensic.run(store=store, log=logging.getLogger("t"))["new_alerts"] == 0  # already flagged
+
+
+class FakeDrive:
+    """Stands in for an AuthorizedSession against the Drive v3 API."""
+
+    def __init__(self, files):
+        self.files = files
+
+    def get(self, url, params=None, timeout=None):
+        class R:
+            def __init__(self, payload=None, content=b""):
+                self._p, self.content = payload, content
+
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return self._p
+        if url.endswith("/files"):
+            return R({"files": [{k: v for k, v in f.items() if k != "data"} for f in self.files]})
+        fid = url.split("/files/")[1].split("/")[0]
+        return R(content=next(f["data"] for f in self.files if f["id"] == fid))
+
+
+def test_drive_inbox(env, monkeypatch):
+    import logging
+
+    from mb.agents import ingestion
+    store, blob = env
+    monkeypatch.setenv("MB_DRIVE_INBOX_ID", "folder123")
+    fake = FakeDrive([
+        {"id": "f1abcdefgh", "name": "nse-2026-11-06.csv", "mimeType": "text/csv", "data": NSE_ANN},
+        {"id": "f2abcdefgh", "name": "sheet", "mimeType": "application/vnd.google-apps.spreadsheet", "data": NSE_ANN},
+    ])
+    out = ingestion.run(store=store, log=logging.getLogger("t"), drive_session=fake)
+    assert out["from_drive"] == 2 and out["new_filings"] == 3  # second file duplicates the first
+    out = ingestion.run(store=store, log=logging.getLogger("t"), drive_session=fake)
+    assert out["from_drive"] == 0  # remembered in drive_seen
+
+
+def test_drive_failure_still_loads_uploads(env, monkeypatch):
+    import logging
+
+    from mb.agents import ingestion
+    store, blob = env
+    monkeypatch.setenv("MB_DRIVE_INBOX_ID", "folder123")
+
+    class Broken:
+        def get(self, *a, **k):
+            raise ConnectionError("no drive")
+    blob.put("filings/inbox/a.csv", NSE_ANN)
+    out = ingestion.run(store=store, log=logging.getLogger("t"), drive_session=Broken())
+    assert out["new_filings"] == 3 and "no drive" in out["drive_error"]
 
 
 def test_bse_export_and_bad_file():

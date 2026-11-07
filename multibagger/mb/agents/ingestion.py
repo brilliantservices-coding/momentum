@@ -1,12 +1,16 @@
-"""Ingestion agent: loads announcement CSVs dropped in the upload inbox into `filings/`.
+"""Ingestion agent: loads announcement CSVs into `filings/`.
 
-The portal's Data page saves uploads to `filings/inbox/` and starts this agent. Processed files
+Two drop points: the Google Drive folder MB_DRIVE_INBOX_ID (filled by a scheduled Cowork task on
+the user's desktop) is copied into the bucket inbox first, then everything in `filings/inbox/`
+(including portal uploads) is loaded. Processed files
 move to `filings/processed/`. New filings are then checked by the forensic filing rules straight
 away, so a hard red flag shows up minutes after the upload.
 """
 from __future__ import annotations
 
-from .. import announcements
+import os
+
+from .. import announcements, drive
 from ..blob import get_blob
 from ..rules import filing_flags
 from ..store import now_iso
@@ -14,8 +18,29 @@ from ..store import now_iso
 INBOX, DONE = "filings/inbox/", "filings/processed/"
 
 
-def run(store, log) -> dict:
+def pull_drive(store, blob, log, folder_id: str, session=None) -> int:
+    pulled = 0
+    for f in drive.list_files(folder_id, session):
+        if store.get("drive_seen", f["id"]):
+            continue
+        data, name = drive.download(f, session)
+        blob.put(f"{INBOX}drive-{f['id'][:8]}-{name.replace('/', '_')}", data, "text/csv")
+        store.set("drive_seen", f["id"], {"name": f["name"], "copied": now_iso()})
+        pulled += 1
+    log.info("drive: %d new file(s) copied from the inbox folder", pulled)
+    return pulled
+
+
+def run(store, log, drive_session=None) -> dict:
     blob = get_blob()
+    folder = os.getenv("MB_DRIVE_INBOX_ID")
+    drive_files, drive_error = 0, None
+    if folder:
+        try:
+            drive_files = pull_drive(store, blob, log, folder, drive_session)
+        except Exception as exc:  # keep loading portal uploads even if Drive is unreachable
+            drive_error = f"{type(exc).__name__}: {exc}"[:300]
+            log.error("drive: %s", drive_error)
     files = blob.list(INBOX)
     stamp, total_new, flagged = now_iso(), 0, 0
     for path in files:
@@ -44,4 +69,7 @@ def run(store, log) -> dict:
         log.info("%s: %d rows (%s), %d new, %d flags", name, report["rows"], report["exchange"], len(new), len(alerts))
     if not files:
         log.info("inbox empty: upload an announcements CSV on the portal's Data page")
-    return {"files": len(files), "new_filings": total_new, "new_alerts": flagged}
+    out = {"files": len(files), "from_drive": drive_files, "new_filings": total_new, "new_alerts": flagged}
+    if drive_error:
+        out["drive_error"] = drive_error
+    return out
