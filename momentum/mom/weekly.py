@@ -106,6 +106,8 @@ def run(force: bool = False, px: dict | None = None, sectors: dict | None = None
             px["liquid_price"] = float(last.iloc[-1]) if len(last) else None
             for k in ("close", "high", "low", "volume"):
                 px[k] = px[k].drop(columns=[LIQUID])
+        if not px.get("liquid_price"):
+            log.warning("no %s price from Yahoo; the parking quantity uses an estimate", LIQUID)
         log.info("prices: %d symbols with data, last bar %s", px["close"].shape[1], px["close"].index[-1].date())
         proposal, m, book = build(px, sectors, store, today)
 

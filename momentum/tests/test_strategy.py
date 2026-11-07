@@ -145,6 +145,13 @@ def test_liquid_parking_and_summary():
     p["funnel"] = strategy.funnel(m)
     text = " ".join(x["text"] for x in strategy.summarize(p, c))
     assert "Red regime rule" in text and "LIQUIDBEES" in text and "below a falling 40-week average" in text
+    assert "estimate" not in text
+
+    # no LIQUIDBEES quote this week: the summary says the price is an estimate
+    p2 = strategy.propose(m, {"cash": 1_000_000, "positions": {}}, p["regime"], c, today=date(2026, 11, 7))
+    p2["regime"], p2["funnel"] = p["regime"], p["funnel"]
+    assert p2["liquid"]["price_estimated"]
+    assert "is an estimate" in " ".join(x["text"] for x in strategy.summarize(p2, c))
 
     # next week in Green: parked units are sold to fund the buys
     book = {"cash": 10_000, "positions": {"LIQUIDBEES": {"qty": 990, "entry": 1000.0, "stop": 0, "liquid": True,

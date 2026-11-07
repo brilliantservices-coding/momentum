@@ -102,6 +102,7 @@ Kite ever shows it as COMPLETE, you simply hold 1 unit of LIQUIDBEES. Sell it or
 | "Not connected today" / "session has expired" | Do the daily Connect Zerodha login |
 | Kite "IP not allowed" / InputException on orders | The static IP changed or isn't whitelisted: confirm `gcloud compute addresses describe mom-kite-ip --region=$REGION` is 34.93.168.72 and matches the Kite developer profile |
 | Login fails with checksum/TokenException | The API secret in Secret Manager doesn't match the Kite app. Add the correct version and restart the relay |
+| Summary says the LIQUIDBEES price "is an estimate" | Yahoo returned no LIQUIDBEES.NS prices that week (the log says "no LIQUIDBEES price"). Check the price in Kite and edit the park quantity before signing off |
 | Budget alert email | See Costs below; check that nothing unexpected carries `app=momentum` |
 
 ## Costs (approximate, per month)
