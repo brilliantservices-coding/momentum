@@ -1,0 +1,18 @@
+{% extends "base.html" %}{% block body %}
+<h1>Research</h1><p class="sub">Conviction scores from the company analyst (after the red-team review for tier A and B), and the theme map. {{facts}} extracted facts on file.</p>
+<h2>Conviction scores</h2>
+{% if scores %}<div class="tablewrap"><table><tr><th>Company</th><th>Score</th><th>Tier</th><th>Archetype</th><th>Red team</th><th>Analysed</th></tr>
+{% for s in scores %}<tr><td><a href="/research/{{s.id}}"><strong>{{s.id}}</strong></a>{% if s.id in held %} <span class="pill on">held</span>{% endif %}<br><span class="small">{{s.name or ''}}</span></td>
+<td class="num">{{s.score}}{% if s.previous_score is not none and s.previous_score != s.score %} <span class="small">(was {{s.previous_score}})</span>{% endif %}</td>
+<td><span class="pill {{'on' if s.tier in ('A','B') else 'off' if s.tier=='Reject' else ''}}">{{s.tier}}</span></td>
+<td class="small">{{s.archetype or ''}}</td>
+<td class="small">{% if s.redteam_needed %}waiting{% elif s.redteamed %}<a href="/research/{{s.id}}#redteam">{{ '%+.1f'|format(s.redteam_adjustment or 0) }}</a>{% else %}–{% endif %}</td>
+<td class="small">{{(s.analysed or '')[:10]}}</td></tr>{% endfor %}</table></div>
+{% else %}<div class="card empty">No scores yet. Run the Company analyst from the <a href="/">Overview</a> once the watchlist has survivors.</div>{% endif %}
+<h2>Themes</h2>
+{% if themes %}<div class="tablewrap"><table><tr><th>Theme</th><th>Total /30</th><th>Runway</th><th>Policy</th><th>Capital cycle</th><th>Breadth</th><th>Narrative</th><th>Valuation</th><th>Bottleneck</th></tr>
+{% for t in themes %}<tr><td><strong>{{t.name}}</strong>{% if t.active %} <span class="pill on">active</span>{% endif %}</td><td class="num">{{t.total}}</td>
+{% for d in ["demand_runway","policy_support","capital_cycle","earnings_breadth","narrative_stage","valuation_headroom"] %}<td class="num">{{t.scores[d]}}</td>{% endfor %}
+<td class="small">{{t.bottleneck or ''}}</td></tr>{% endfor %}</table></div>
+{% else %}<div class="card empty">No themes scored yet. Run the Theme analyst once; it then runs quarterly if you resume its schedule.</div>{% endif %}
+{% endblock %}

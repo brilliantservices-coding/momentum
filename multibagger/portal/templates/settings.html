@@ -1,0 +1,18 @@
+{% extends "base.html" %}{% block body %}
+<h1>Settings</h1><p class="sub">Which Claude the research agents use. Changes apply from each agent's next run.</p>
+<div class="card"><form method="post" action="/settings">
+<h3>Provider</h3>
+<label><input type="radio" name="provider" value="subscription" {{'checked' if llm.provider=='subscription'}}> <strong>Claude subscription</strong> (default). Runs Claude Code headless with your plan's token; no GCP charge, counts against your plan's usage limits.
+{% if not token_set %}<span class="small" style="color:var(--bad)"> Token not set up on this service yet.</span>{% endif %}</label><br>
+<label><input type="radio" name="provider" value="vertex" {{'checked' if llm.provider=='vertex'}}> <strong>Vertex AI</strong>. Claude via your GCP project, billed per token on the GCP bill (counts toward the ₹{{ "%.0f"|format(settings.monthly_budget_inr) }} budget).</label>
+<h3>Model</h3><select name="model">{% for m in models %}<option value="{{m}}" {{'selected' if m==llm.model}}>{{m}} (${{prices[m][0]}} in / ${{prices[m][1]}} out per M tokens)</option>{% endfor %}</select>
+<h3>Effort</h3><select name="effort">{% for e in ["low","medium","high","xhigh","max"] %}<option {{'selected' if e==llm.effort}}>{{e}}</option>{% endfor %}</select>
+<span class="small">Higher effort thinks longer and costs more tokens.</span>
+<h3>Daily cap (USD)</h3><input type="number" name="daily_cap_usd" min="0" max="50" step="0.5" value="{{llm.daily_cap_usd}}">
+<p class="small">Agents stop calling the model for the day once this is reached. On Vertex it's real spend estimated from token counts; on the subscription it's the notional cost Claude Code reports, used to stop the agents eating your plan's allowance.</p>
+<button class="primary">Save</button></form></div>
+<h2>Today</h2>
+<div class="card"><p style="margin-top:0">${{ "%.2f"|format(spend.usd or 0) }} of ${{llm.daily_cap_usd}} across {{spend.calls or 0}} call(s).</p>
+{% if calls %}<div class="tablewrap"><table><tr><th>At (UTC)</th><th>Agent</th><th>Provider</th><th>Model</th><th>USD</th></tr>
+{% for c in calls %}<tr><td>{{(c.at or '')[:19].replace('T',' ')}}</td><td>{{c.agent}}</td><td>{{c.provider}}</td><td>{{c.model}}</td><td class="num">{{ "%.3f"|format(c.usd or 0) }}</td></tr>{% endfor %}</table></div>{% endif %}</div>
+{% endblock %}

@@ -1,0 +1,113 @@
+"""LLM access for the phase 2 agents, switchable in the portal (Settings page).
+
+provider "subscription": runs the Claude Code CLI headless (`claude -p`) with the long-lived
+  token from `claude setup-token` (env CLAUDE_CODE_OAUTH_TOKEN, mounted from Secret Manager).
+  Usage counts against the user's Claude plan limits, not the GCP bill.
+provider "vertex": Claude on Vertex AI through the Anthropic SDK, billed per token to GCP.
+
+Every call is checked against a daily spend cap first. For Vertex the cost is estimated from token
+usage at list prices; for the subscription it's the CLI's notional cost, used as a proxy for how
+much of the plan's allowance the agents consume.
+"""
+from __future__ import annotations
+
+import json
+import os
+import re
+import subprocess
+from datetime import datetime, timezone
+
+from .config import settings
+from .store import get_store, now_iso
+
+DEFAULTS = {"provider": "subscription", "model": "claude-opus-5-5", "effort": "medium",
+            "daily_cap_usd": settings.daily_llm_cap_usd, "vertex_region": "global"}
+MODELS = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]
+# USD per million tokens (input, output), first-party list prices used as an estimate.
+PRICES = {"claude-opus-5-5": (4.0, 20.0), "claude-sonnet-5-5": (2.0, 10.0), "claude-haiku-5-5": (0.10, 0.50)}
+
+
+class BudgetExceeded(RuntimeError):
+    pass
+
+
+class LLMError(RuntimeError):
+    pass
+
+
+def get_settings(store=None) -> dict:
+    return {**DEFAULTS, **((store or get_store()).get("control", "llm") or {})}
+
+
+def today() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+def spend_today(store=None) -> dict:
+    return (store or get_store()).get("llm_spend", today()) or {"usd": 0.0, "calls": 0}
+
+
+def _record(store, cost: float, provider: str, model: str, agent: str | None) -> None:
+    s = spend_today(store)
+    store.set("llm_spend", today(), {"date": today(), "usd": round(s.get("usd", 0) + cost, 6),
+                                     "calls": s.get("calls", 0) + 1, "updated": now_iso()})
+    store.set("llm_calls", f"{now_iso()}-{os.urandom(3).hex()}",
+              {"at": now_iso(), "provider": provider, "model": model, "usd": round(cost, 6), "agent": agent})
+
+
+def extract_json(text: str):
+    """Parses the first JSON object in a reply (tolerates ```json fences and prose around it)."""
+    m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.S)
+    candidate = m.group(1) if m else text[text.find("{"): text.rfind("}") + 1]
+    try:
+        return json.loads(candidate)
+    except Exception as exc:
+        raise LLMError(f"reply was not valid JSON: {exc}; first 300 chars: {text[:300]!r}") from exc
+
+
+def _via_cli(system: str, prompt: str, model: str, effort: str, timeout: int) -> tuple[str, float]:
+    if not os.getenv("CLAUDE_CODE_OAUTH_TOKEN"):
+        raise LLMError("CLAUDE_CODE_OAUTH_TOKEN is not set: store the `claude setup-token` value in Secret "
+                       "Manager (mb-claude-oauth-token) and redeploy, or switch the provider to Vertex in Settings")
+    # No tools: a single text-in, JSON-out completion, nothing on disk or the network is touched.
+    cmd = ["claude", "-p", "--output-format", "json", "--model", model, "--effort", effort, "--tools", "",
+           "--no-session-persistence", "--append-system-prompt", system]
+    proc = subprocess.run(cmd, input=prompt, capture_output=True, text=True, timeout=timeout)
+    if proc.returncode != 0:
+        raise LLMError(f"claude CLI exited {proc.returncode}: {(proc.stderr or proc.stdout)[-500:]}")
+    out = json.loads(proc.stdout)
+    if out.get("is_error"):
+        raise LLMError(f"claude CLI error: {str(out.get('result'))[:500]}")
+    return out.get("result") or "", float(out.get("total_cost_usd") or 0.0)
+
+
+def _via_vertex(system: str, prompt: str, model: str, effort: str, region: str) -> tuple[str, float]:
+    from anthropic import AnthropicVertex
+
+    client = AnthropicVertex(project_id=settings.project, region=region)
+    with client.messages.stream(model=model, max_tokens=32000, system=system,
+                                thinking={"type": "adaptive"}, output_config={"effort": effort},
+                                messages=[{"role": "user", "content": prompt}]) as stream:
+        msg = stream.get_final_message()
+    if msg.stop_reason == "refusal":
+        raise LLMError(f"model declined: {getattr(msg, 'stop_details', None)}")
+    text = "".join(b.text for b in msg.content if b.type == "text")
+    pin, pout = PRICES.get(model, PRICES["claude-opus-5-5"])
+    cost = (msg.usage.input_tokens * pin + msg.usage.output_tokens * pout) / 1e6
+    return text, cost
+
+
+def complete_json(system: str, prompt: str, agent: str | None = None, store=None, timeout: int = 900):
+    """One call, JSON reply. Raises BudgetExceeded before calling if today's cap is used up."""
+    store = store or get_store()
+    cfg = get_settings(store)
+    spent = spend_today(store).get("usd", 0.0)
+    if spent >= float(cfg["daily_cap_usd"]):
+        raise BudgetExceeded(f"daily LLM cap reached: ${spent:.2f} of ${float(cfg['daily_cap_usd']):.2f}")
+    system = system + "\n\nReply with a single JSON object only, no prose before or after it."
+    if cfg["provider"] == "vertex":
+        text, cost = _via_vertex(system, prompt, cfg["model"], cfg["effort"], cfg["vertex_region"])
+    else:
+        text, cost = _via_cli(system, prompt, cfg["model"], cfg["effort"], timeout)
+    _record(store, cost, cfg["provider"], cfg["model"], agent)
+    return extract_json(text)

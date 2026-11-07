@@ -1,5 +1,13 @@
+# Claude Code CLI for the "subscription" LLM provider (needs Node 22+, newer than Debian ships).
+FROM node:22-slim AS node
+RUN npm install -g @anthropic-ai/claude-code@2.1.319 && npm cache clean --force
+
 FROM python:3.13-slim
-ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 MB_BACKEND=gcp
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 MB_BACKEND=gcp DISABLE_AUTOUPDATER=1 \
+    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
+COPY --from=node /usr/local/bin/node /usr/local/bin/node
+COPY --from=node /usr/local/lib/node_modules /usr/local/lib/node_modules
+RUN ln -s /usr/local/lib/node_modules/@anthropic-ai/claude-code/cli.js /usr/local/bin/claude
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt

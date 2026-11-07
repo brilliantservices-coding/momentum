@@ -28,11 +28,12 @@ class _ListHandler(logging.Handler):
 
 
 def run(agent_id: str, force: bool = False) -> dict:
-    agent_by_id(agent_id)  # validates the id
+    agent = agent_by_id(agent_id)  # validates the id
     store = get_store()
     control = store.get("agents", agent_id) or {}
+    enabled = control.get("enabled", agent.get("default_enabled", True))
     killed = (store.get("control", "global") or {}).get("killed", False)
-    if not force and (killed or control.get("enabled") is False):
+    if not force and (killed or not enabled):
         reason = "budget kill switch active" if killed else "agent paused in portal"
         print(f"skip {agent_id}: {reason}")
         return {"status": "skipped", "reason": reason}

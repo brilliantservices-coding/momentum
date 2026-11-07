@@ -34,7 +34,7 @@ gcloud components list --filter="id=beta" --format="value(state.name)" 2>/dev/nu
 $G services enable run.googleapis.com cloudscheduler.googleapis.com firestore.googleapis.com \
   storage.googleapis.com artifactregistry.googleapis.com cloudbuild.googleapis.com pubsub.googleapis.com \
   billingbudgets.googleapis.com cloudbilling.googleapis.com iap.googleapis.com iam.googleapis.com \
-  drive.googleapis.com
+  drive.googleapis.com aiplatform.googleapis.com secretmanager.googleapis.com
 
 say "Firestore (native mode, free tier applies to the default database)"
 exists $G firestore databases describe --database='(default)' || \
@@ -58,6 +58,7 @@ bind "$SA_PORTAL" roles/datastore.user
 bind "$SA_PORTAL" roles/run.developer          # run / cancel agent jobs
 bind "$SA_PORTAL" roles/cloudscheduler.admin   # pause / resume schedules
 bind "$SA_SCHED" roles/run.invoker
+bind "$SA_AGENTS" roles/aiplatform.user        # only used when Settings switches the LLM to Vertex
 for sa in "$SA_AGENTS" "$SA_PORTAL"; do
   gcloud storage buckets add-iam-policy-binding "gs://$BUCKET" --project="$PROJECT_ID" \
     --member="serviceAccount:$sa" --role=roles/storage.objectAdmin >/dev/null
@@ -77,17 +78,32 @@ $G artifacts repositories set-cleanup-policies mb --location="$REGION" --policy=
 say "Building image $IMAGE (Cloud Build free tier)"
 $G builds submit --region="$REGION" --tag="$IMAGE" .
 
+say "Claude subscription token (Secret Manager: mb-claude-oauth-token)"
+# Store it once, without echoing it:  claude setup-token, then
+#   printf '%s' "<token>" | gcloud secrets create mb-claude-oauth-token --data-file=- --labels=app=multibagger
+SECRET_FLAGS=(--clear-secrets)
+if exists $G secrets describe mb-claude-oauth-token; then
+  $G secrets add-iam-policy-binding mb-claude-oauth-token --member="serviceAccount:$SA_AGENTS" \
+    --role=roles/secretmanager.secretAccessor >/dev/null
+  SECRET_FLAGS=(--set-secrets=CLAUDE_CODE_OAUTH_TOKEN=mb-claude-oauth-token:latest)
+  echo "found; mounted into the agent jobs"
+else
+  echo "not found; the subscription provider stays unavailable until it is stored (Vertex still works)"
+fi
+
 DRIVE_INBOX_ID="${DRIVE_INBOX_ID:-}"
 COMMON_ENV="MB_DRIVE_INBOX_ID=$DRIVE_INBOX_ID,MB_BACKEND=gcp,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,MB_REGION=$REGION,MB_BUCKET=$BUCKET,MB_MONTHLY_BUDGET_INR=$BUDGET_AMOUNT"
 
 say "Agent jobs and schedules"
-# Reads id/schedule pairs from agents.yaml without needing Python locally.
-awk '/^  - id:/{id=$3} /^    schedule:/{match($0,/"[^"]+"/); print id"|"substr($0,RSTART+1,RLENGTH-2)}' agents.yaml |
-while IFS='|' read -r AGENT CRON; do
+# Reads id|schedule|default_enabled from agents.yaml without needing Python locally.
+awk '/^  - id:/{if(id)print id"|"cron"|"en; id=$3; cron=""; en="true"}
+     /^    schedule:/{match($0,/"[^"]+"/); cron=substr($0,RSTART+1,RLENGTH-2)}
+     /^    default_enabled:/{en=$2} END{if(id)print id"|"cron"|"en}' agents.yaml |
+while IFS='|' read -r AGENT CRON DEFAULT_ON; do
   echo "-- $AGENT ($CRON)"
   $G run jobs deploy "mb-$AGENT" --region="$REGION" --image="$IMAGE" \
     --command=python --args="-m,mb.runner,$AGENT" --service-account="$SA_AGENTS" \
-    --set-env-vars="$COMMON_ENV" --cpu=1 --memory=1Gi --max-retries=0 --task-timeout=3600 --tasks=1 --labels="$LABELS" >/dev/null
+    --set-env-vars="$COMMON_ENV" "${SECRET_FLAGS[@]}" --cpu=1 --memory=1Gi --max-retries=0 --task-timeout=3600 --tasks=1 --labels="$LABELS" >/dev/null
   URI="https://run.googleapis.com/v2/projects/$PROJECT_ID/locations/$REGION/jobs/mb-$AGENT:run"
   if exists $G scheduler jobs describe "mb-$AGENT-schedule" --location="$REGION"; then
     $G scheduler jobs update http "mb-$AGENT-schedule" --location="$REGION" --schedule="$CRON" \
@@ -95,6 +111,11 @@ while IFS='|' read -r AGENT CRON; do
   else
     $G scheduler jobs create http "mb-$AGENT-schedule" --location="$REGION" --schedule="$CRON" \
       --time-zone=Asia/Kolkata --uri="$URI" --http-method=POST --oauth-service-account-email="$SA_SCHED" >/dev/null
+    # Agents shipped switched off start paused; after that the portal's pause/resume owns the state.
+    if [ "$DEFAULT_ON" = false ]; then
+      $G scheduler jobs pause "mb-$AGENT-schedule" --location="$REGION" >/dev/null
+      echo "   created paused (resume it from the portal)"
+    fi
   fi
 done
 # (comma lists are passed with ';' because gcloud splits --set-env-vars on commas; the app accepts both)

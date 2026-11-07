@@ -17,11 +17,12 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from mb import control
+from mb import control, llm
 from mb.blob import get_blob
 from mb.config import load_agents, settings
 from mb.announcements import parse as parse_announcements
 from mb.fundamentals import import_file
+from mb.rules import WEIGHTS
 from mb.store import get_store, now_iso
 
 HERE = Path(__file__).parent
@@ -69,7 +70,7 @@ def _agents_with_state():
     out = []
     for a in load_agents():
         st = store.get("agents", a["id"]) or {}
-        out.append({**a, **st, "enabled": st.get("enabled", True)})
+        out.append({**a, **st, "enabled": st.get("enabled", a.get("default_enabled", True))})
     return out
 
 
@@ -201,6 +202,13 @@ def approval_decide(request: Request, pid: str, decision: str = Form(...), note:
                                  "decided": now_iso()}, merge=True)
     store.set("journal", f"{now_iso()}-{pid}", {"at": now_iso(), "proposal": pid, "symbol": p.get("symbol"),
                                                  "action": p.get("action"), "decision": decision, "note": note})
+    # Approval means "I am placing this order myself"; the holdings list drives exit checks and the 25-name cap.
+    if decision in ("approved", "edited") and p.get("symbol"):
+        if p.get("action") == "exit":
+            store.delete("holdings", p["symbol"])
+        else:
+            store.set("holdings", p["symbol"], {"symbol": p["symbol"], "tier": p.get("tier"), "size_pct": p.get("size_pct"),
+                                                "since": now_iso(), "proposal": pid}, merge=True)
     return back("/approvals", f"Proposal {decision}. Place any order yourself with your broker.")
 
 
@@ -237,6 +245,53 @@ async def upload_announcements(file: UploadFile = File(...)):
     get_blob().put(f"filings/inbox/{now_iso().replace(':', '')}-{name}", data, "text/csv")
     control.run_now("ingestion")
     return back("/data", f"Queued {report['rows']} {report['exchange']} announcements; the ingestion agent is loading them now")
+
+
+@app.get("/research", response_class=HTMLResponse)
+def research(request: Request):
+    store = get_store()
+    scores = sorted(store.list("scores"), key=lambda s: -(s.get("score") or 0))
+    themes = sorted(store.list("themes"), key=lambda t: (not t.get("active"), -(t.get("total") or 0)))
+    held = {h["id"] for h in store.list("holdings")}
+    return render(request, "research.html", scores=scores, themes=themes, held=held,
+                  facts=len(store.list("facts")))
+
+
+@app.get("/research/{symbol}", response_class=HTMLResponse)
+def research_company(request: Request, symbol: str):
+    store = get_store()
+    sym = symbol.upper()
+    memo, score = store.get("memos", sym), store.get("scores", sym)
+    if not memo and not score:
+        raise HTTPException(404, "No research on this company yet")
+    facts = store.list("facts", where=[("symbol", "==", sym)], order_by="extracted", limit=100)
+    history = store.list("memo_history", where=[("symbol", "==", sym)], order_by="written", limit=10)
+    return render(request, "research_company.html", sym=sym, memo=memo or {}, score=score or {},
+                  redteam=store.get("redteam", sym), facts=facts, history=history,
+                  fundamentals=store.get("fundamentals", sym) or {}, weights=WEIGHTS)
+
+
+@app.get("/settings", response_class=HTMLResponse)
+def settings_page(request: Request, msg: str = ""):
+    store = get_store()
+    calls = store.list("llm_calls", order_by="at", limit=20)
+    return render(request, "settings.html", llm=llm.get_settings(store), models=llm.MODELS, prices=llm.PRICES,
+                  spend=llm.spend_today(store), calls=calls, token_set=bool(os.getenv("CLAUDE_CODE_OAUTH_TOKEN")),
+                  msg=msg)
+
+
+@app.post("/settings")
+def settings_save(request: Request, provider: str = Form(...), model: str = Form(...), effort: str = Form(...),
+                  daily_cap_usd: float = Form(...)):
+    if provider not in ("subscription", "vertex") or model not in llm.MODELS or \
+            effort not in ("low", "medium", "high", "xhigh", "max") or not 0 <= daily_cap_usd <= 50:
+        raise HTTPException(400)
+    user = current_user(request)
+    get_store().set("control", "llm", {"provider": provider, "model": model, "effort": effort,
+                                       "daily_cap_usd": daily_cap_usd, "updated": now_iso(), "by": user}, merge=True)
+    get_store().set("audit", f"{now_iso()}-llm-settings", {"at": now_iso(), "user": user, "action": "llm settings",
+                                                          "provider": provider, "model": model})
+    return back("/settings", "Saved. Agents use the new settings from their next run.")
 
 
 @app.get("/costs", response_class=HTMLResponse)
