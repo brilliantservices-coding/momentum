@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import os
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
@@ -29,12 +29,6 @@ class Settings:
     monthly_budget_inr: float = float(os.getenv("MB_MONTHLY_BUDGET_INR", "2500"))
     daily_llm_cap_usd: float = float(os.getenv("MB_DAILY_LLM_CAP_USD", "1.0"))
     job_prefix: str = os.getenv("MB_JOB_PREFIX", "mb-")
-    # Symbols for which ingestion also downloads attachments (in addition to the screener watchlist).
-    extra_watchlist: tuple[str, ...] = field(
-        default_factory=lambda: tuple(
-            s.strip().upper() for s in re.split(r"[,;]", os.getenv("MB_WATCHLIST", "")) if s.strip()
-        )
-    )
 
 
 settings = Settings()

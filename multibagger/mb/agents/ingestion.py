@@ -1,60 +1,78 @@
-"""Ingestion agent: new corporate announcements from NSE (BSE as fallback).
+"""Ingestion agent: loads announcement CSVs into `filings/`.
 
-Stores every announcement's metadata in `filings/`. Attachments (PDFs) are downloaded to
-Cloud Storage only for watchlist names (screener candidates plus MB_WATCHLIST), which keeps
-storage and egress near zero.
+Two drop points: the Google Drive folder MB_DRIVE_INBOX_ID (filled by a scheduled Cowork task on
+the user's desktop) is copied into the bucket inbox first, then everything in `filings/inbox/`
+(including portal uploads) and in `inbox/nse/announcements/` (uploaded by the desktop scheduled
+task) is loaded. Processed files
+move to `filings/processed/`. New filings are then checked by the forensic filing rules straight
+away, so a hard red flag shows up minutes after the upload.
 """
 from __future__ import annotations
 
 import os
-from datetime import date, timedelta
 
-from .. import sources
+from .. import announcements, drive
 from ..blob import get_blob
-from ..config import settings
+from ..rules import filing_flags
 from ..store import now_iso
 
-LOOKBACK_DAYS = int(os.getenv("MB_INGEST_LOOKBACK_DAYS", "2"))
-MAX_ATTACHMENTS = int(os.getenv("MB_MAX_ATTACHMENTS", "40"))
+INBOX, DONE = "filings/inbox/", "filings/processed/"
+# Where the desktop scheduled task uploads NSE exports with gcloud.
+DESKTOP_INBOX = "inbox/nse/announcements/"
 
 
-def watchlist(store) -> set[str]:
-    names = {c["id"] for c in store.list("candidates", where=[("passed", "==", True)])}
-    return names | set(settings.extra_watchlist)
+def pull_drive(store, blob, log, folder_id: str, session=None) -> int:
+    pulled = 0
+    for f in drive.list_files(folder_id, session):
+        if store.get("drive_seen", f["id"]):
+            continue
+        data, name = drive.download(f, session)
+        blob.put(f"{INBOX}drive-{f['id'][:8]}-{name.replace('/', '_')}", data, "text/csv")
+        store.set("drive_seen", f["id"], {"name": f["name"], "copied": now_iso()})
+        pulled += 1
+    log.info("drive: %d new file(s) copied from the inbox folder", pulled)
+    return pulled
 
 
-def run(store, log, fetchers=None) -> dict:
-    end = date.today()
-    start = end - timedelta(days=LOOKBACK_DAYS)
-    fetchers = fetchers or [("NSE", sources.nse_announcements), ("BSE", sources.bse_announcements)]
-    items, used, errors = [], None, {}
-    for name, fn in fetchers:
+def run(store, log, drive_session=None) -> dict:
+    blob = get_blob()
+    folder = os.getenv("MB_DRIVE_INBOX_ID")
+    drive_files, drive_error = 0, None
+    if folder:
         try:
-            items = fn(start, end)
-            used = name
-            break
+            drive_files = pull_drive(store, blob, log, folder, drive_session)
+        except Exception as exc:  # keep loading portal uploads even if Drive is unreachable
+            drive_error = f"{type(exc).__name__}: {exc}"[:300]
+            log.error("drive: %s", drive_error)
+    files = blob.list(INBOX) + blob.list(DESKTOP_INBOX)
+    stamp, total_new, flagged = now_iso(), 0, 0
+    for path in files:
+        name = path.rsplit("/", 1)[-1]
+        try:
+            items, report = announcements.parse(blob.get(path), name)
         except Exception as exc:
-            errors[name] = f"{type(exc).__name__}: {exc}"[:300]
-            log.warning("%s announcements failed: %s", name, errors[name])
-    if used is None:
-        raise RuntimeError(f"all announcement sources failed: {errors}")
-
-    new = [i for i in items if not store.get("filings", i["id"])]
-    wl = watchlist(store)
-    blob, saved = get_blob(), 0
-    for item in new:
-        item["ingested"] = now_iso()
-        item["stored"] = None
-        if item["symbol"] in wl and item.get("attachment") and saved < MAX_ATTACHMENTS:
-            try:
-                data = sources.download(item["attachment"])
-                ext = item["attachment"].rsplit(".", 1)[-1][:5].lower()
-                item["stored"] = blob.put(f"filings/{item['symbol']}/{item['id']}.{ext}", data,
-                                          "application/pdf" if ext == "pdf" else "application/octet-stream")
-                saved += 1
-            except Exception as exc:
-                log.warning("attachment %s: %s", item["id"], exc)
-    store.set_many("filings", {i["id"]: {k: v for k, v in i.items() if k != "id"} for i in new})
-    log.info("ingestion via %s: %d fetched, %d new, %d attachments saved", used, len(items), len(new), saved)
-    return {"source": used, "fetched": len(items), "new": len(new), "attachments_saved": saved,
-            "source_errors": errors}
+            log.error("%s: %s", name, exc)
+            blob.move(path, DONE + "failed-" + name)
+            continue
+        new = {i["id"]: {**{k: v for k, v in i.items() if k != "id"}, "ingested": stamp, "source_file": name}
+               for i in items if not store.get("filings", i["id"])}
+        if new:
+            store.set_many("filings", new)
+        alerts = {}
+        for fid, f in new.items():
+            for fl in filing_flags(f"{f.get('category', '')} {f.get('subject', '')}"):
+                alerts[f"{fid}-{fl['rule']}"] = {"symbol": f.get("symbol"), "name": f.get("company"), **fl,
+                                                 "source": f"{f['exchange']} filing {f.get('date', '')}",
+                                                 "link": f.get("attachment") or None, "created": stamp, "status": "open"}
+        if alerts:
+            store.set_many("alerts", alerts)
+        blob.move(path, DONE + name)
+        total_new += len(new)
+        flagged += len(alerts)
+        log.info("%s: %d rows (%s), %d new, %d flags", name, report["rows"], report["exchange"], len(new), len(alerts))
+    if not files:
+        log.info("inbox empty: upload an announcements CSV on the portal's Data page")
+    out = {"files": len(files), "from_drive": drive_files, "new_filings": total_new, "new_alerts": flagged}
+    if drive_error:
+        out["drive_error"] = drive_error
+    return out

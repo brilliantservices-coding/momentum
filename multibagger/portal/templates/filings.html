@@ -1,9 +1,9 @@
 {% extends "base.html" %}{% block body %}
-<h1>Filings</h1><p class="sub">Corporate announcements the ingestion agent has collected. Attachments are saved for watchlist names.</p>
+<h1>Filings</h1><p class="sub">Corporate announcements loaded from your uploads on the <a href="/data">Data page</a>.</p>
 <form method="get" action="/filings" style="margin-bottom:12px"><input type="text" name="symbol" value="{{symbol}}" placeholder="Filter by symbol"> <button>Filter</button></form>
 {% if rows %}<div class="tablewrap"><table><tr><th>Date</th><th>Company</th><th>Category</th><th>Subject</th><th>Doc</th></tr>
 {% for f in rows %}<tr><td class="small">{{f.date}}</td><td><a href="/filings?symbol={{f.symbol}}"><strong>{{f.symbol}}</strong></a><br><span class="small">{{f.company or ''}}</span></td>
 <td class="small">{{f.category or ''}}</td><td>{{(f.subject or '')[:240]}}</td>
-<td>{% if f.attachment %}<a href="{{f.attachment}}" target="_blank" rel="noopener">source</a>{% endif %}{% if f.stored %}<br><span class="small">saved</span>{% endif %}</td></tr>{% endfor %}
-</table></div>{% else %}<div class="card empty">No filings yet. Run the Ingestion agent.</div>{% endif %}
+<td>{% if f.attachment %}<a href="{{f.attachment}}" target="_blank" rel="noopener">source</a>{% endif %}</td></tr>{% endfor %}
+</table></div>{% else %}<div class="card empty">No filings yet. Upload an announcements CSV on the <a href="/data">Data page</a>.</div>{% endif %}
 {% endblock %}

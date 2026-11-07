@@ -21,6 +21,17 @@ class LocalBlob:
     def exists(self, path: str) -> bool:
         return (self.root / path).exists()
 
+    def list(self, prefix: str) -> list[str]:
+        base = self.root / prefix
+        if not base.exists():
+            return []
+        return sorted(str(p.relative_to(self.root)).replace("\\", "/") for p in base.iterdir() if p.is_file())
+
+    def move(self, src: str, dst: str) -> None:
+        d = self.root / dst
+        d.parent.mkdir(parents=True, exist_ok=True)
+        (self.root / src).replace(d)
+
 
 class GcsBlob:
     def __init__(self):
@@ -38,6 +49,13 @@ class GcsBlob:
 
     def exists(self, path):
         return self.bucket.blob(path).exists()
+
+    def list(self, prefix):
+        return sorted(b.name for b in self.bucket.list_blobs(prefix=prefix) if not b.name.endswith("/"))
+
+    def move(self, src, dst):
+        self.bucket.copy_blob(self.bucket.blob(src), self.bucket, dst)
+        self.bucket.blob(src).delete()
 
 
 _blob = None

@@ -5,5 +5,10 @@
 <form method="post" action="/data/fundamentals" enctype="multipart/form-data" class="row"><input type="file" name="file" accept=".csv,.xlsx,.xls" required> <button class="primary">Upload and import</button></form>
 {% if fundamentals %}<p class="small">Last import: <strong>{{fundamentals.file}}</strong>, {{fundamentals.rows}} companies, {{fundamentals.imported[:16].replace('T',' ')}} UTC.<br>
 Recognised: {{fundamentals.recognised|join(', ')}}<br>Missing (rules using these show "?"): {{fundamentals.missing|join(', ')}}</p>{% endif %}</div>
+<h2>Announcements</h2>
+<div class="card"><p class="small" style="margin-top:0">NSE and BSE block automated downloads, so filings come in from your browser. On nseindia.com go to Companies listing → Corporate filings → Announcements, pick the date range (for example the last week), and use <em>Download (.csv)</em>. A BSE announcements export works too. Upload it here: the ingestion agent loads it and flags red-flag keywords (auditor resignation, SEBI orders, defaults, preferential issues) within a few minutes. Overlapping dates are fine; duplicates are skipped.</p>
+<form method="post" action="/data/announcements" enctype="multipart/form-data" class="row"><input type="file" name="file" accept=".csv,.xlsx,.xls" required> <button class="primary">Upload announcements</button></form>
+{% if inbox %}<p class="small">Waiting to load: {{inbox|length}} file(s).</p>{% endif %}
+{% if processed %}<p class="small">Recently loaded: {% for p in processed %}{{p.rsplit('/',1)[-1]}}{{', ' if not loop.last}}{% endfor %}</p>{% endif %}</div>
 <h2>Universe</h2><div class="card"><p class="small" style="margin:0">{{universe}} NSE symbols loaded by the Universe builder.</p></div>
 {% endblock %}

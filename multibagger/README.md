@@ -9,8 +9,8 @@ action and places any order manually. Nothing here talks to a broker. Educationa
 | Agent | Cadence (IST) | Does |
 |---|---|---|
 | Universe builder | Mon 06:00 | NSE equity list into `universe/` |
-| Ingestion | Weekdays 19:30 | NSE (BSE fallback) announcements into `filings/`; PDFs saved for watchlist names |
-| Forensic | Weekdays 20:00 | Red-flag checklist on fundamentals and new filings into `alerts/` |
+| Ingestion | Mon, Thu 19:30 | Loads NSE announcement CSVs (desktop task or portal upload) into `filings/` and flags red-flag keywords |
+| Forensic | Mon, Thu 20:00 | Red-flag checklist on fundamentals and new filings into `alerts/` |
 | Screener | Sat 07:00 | Pass 1 screen on the uploaded fundamentals export into `candidates/` |
 
 Phase 2 (next): extraction, theme analyst, company analyst, ecosystem, red-team and portfolio

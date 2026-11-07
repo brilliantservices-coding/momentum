@@ -1,6 +1,5 @@
 import base64
 import json
-from datetime import date
 
 import pytest
 
@@ -41,26 +40,106 @@ def test_import_forensic_screen(env):
     assert not store.get("candidates", "GAMMA")["passed"]
 
 
-def test_ingestion_fallback_and_dedupe(env):
+NSE_ANN = b"""SYMBOL,COMPANY NAME,SUBJECT,DETAILS,BROADCAST DATE/TIME,ATTACHMENT
+ALPHA,Alpha Precision Ltd,Resignation of Statutory Auditors,Resignation of Statutory Auditor M/s XYZ & Co,06-Nov-2026 18:02:11,https://nsearchives.nseindia.com/corporate/ALPHA_1.pdf
+BETA,Beta Ltd,Outcome of Board Meeting,Quarterly results,06-Nov-2026 17:00:00,
+GAMMA,Gamma Ltd,Preferential Issue,Allotment of convertible warrants on preferential basis,05-Nov-2026 10:00:00,
+"""
+
+
+def test_announcements_upload_flow(env):
+    import logging
+
+    from mb.agents import forensic, ingestion
+    store, blob = env
+    blob.put("filings/inbox/a.csv", NSE_ANN)
+    out = ingestion.run(store=store, log=logging.getLogger("t"))
+    assert out == {"files": 1, "from_drive": 0, "new_filings": 3, "new_alerts": 2}
+    assert blob.list("filings/inbox/") == [] and blob.list("filings/processed/") == ["filings/processed/a.csv"]
+    hard = store.list("alerts", where=[("severity", "==", "hard")])
+    assert [a["symbol"] for a in hard] == ["ALPHA"]
+    blob.put("filings/inbox/b.csv", NSE_ANN)  # same rows again
+    assert ingestion.run(store=store, log=logging.getLogger("t"))["new_filings"] == 0
+    assert forensic.run(store=store, log=logging.getLogger("t"))["new_alerts"] == 0  # already flagged
+
+
+class FakeDrive:
+    """Stands in for an AuthorizedSession against the Drive v3 API."""
+
+    def __init__(self, files):
+        self.files = files
+
+    def get(self, url, params=None, timeout=None):
+        class R:
+            def __init__(self, payload=None, content=b""):
+                self._p, self.content = payload, content
+
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return self._p
+        if url.endswith("/files"):
+            return R({"files": [{k: v for k, v in f.items() if k != "data"} for f in self.files]})
+        fid = url.split("/files/")[1].split("/")[0]
+        return R(content=next(f["data"] for f in self.files if f["id"] == fid))
+
+
+def test_drive_inbox(env, monkeypatch):
     import logging
 
     from mb.agents import ingestion
-    store, _ = env
+    store, blob = env
+    monkeypatch.setenv("MB_DRIVE_INBOX_ID", "folder123")
+    fake = FakeDrive([
+        {"id": "f1abcdefgh", "name": "nse-2026-11-06.csv", "mimeType": "text/csv", "data": NSE_ANN},
+        {"id": "f2abcdefgh", "name": "sheet", "mimeType": "application/vnd.google-apps.spreadsheet", "data": NSE_ANN},
+    ])
+    out = ingestion.run(store=store, log=logging.getLogger("t"), drive_session=fake)
+    assert out["from_drive"] == 2 and out["new_filings"] == 3  # second file duplicates the first
+    out = ingestion.run(store=store, log=logging.getLogger("t"), drive_session=fake)
+    assert out["from_drive"] == 0  # remembered in drive_seen
 
-    def nse(a, b):
-        raise ConnectionError("blocked")
 
-    def bse(a, b):
-        return [{"id": "bse-1", "exchange": "BSE", "symbol": "500001", "company": "X", "category": "Company Update",
-                 "subject": "Resignation of Statutory Auditor", "date": str(date.today()), "attachment": None}]
+def test_drive_failure_still_loads_uploads(env, monkeypatch):
+    import logging
 
-    out = ingestion.run(store=store, log=logging.getLogger("t"), fetchers=[("NSE", nse), ("BSE", bse)])
-    assert out["source"] == "BSE" and out["new"] == 1 and "NSE" in out["source_errors"]
-    out = ingestion.run(store=store, log=logging.getLogger("t"), fetchers=[("BSE", bse)])
-    assert out["new"] == 0
+    from mb.agents import ingestion
+    store, blob = env
+    monkeypatch.setenv("MB_DRIVE_INBOX_ID", "folder123")
 
-    from mb.agents import forensic
-    assert forensic.run(store=store, log=logging.getLogger("t"))["hard"] == 1
+    class Broken:
+        def get(self, *a, **k):
+            raise ConnectionError("no drive")
+    blob.put("filings/inbox/a.csv", NSE_ANN)
+    out = ingestion.run(store=store, log=logging.getLogger("t"), drive_session=Broken())
+    assert out["new_filings"] == 3 and "no drive" in out["drive_error"]
+
+
+def test_desktop_task_export(env):
+    """Real NSE export shape: BOM, every field quoted, DETAILS spanning lines."""
+    import logging
+
+    from mb.agents import ingestion
+    store, blob = env
+    csv = ('\ufeff"SYMBOL","COMPANY NAME","SUBJECT","DETAILS","BROADCAST DATE/TIME","RECEIPT","DISSEMINATION",'
+           '"DIFFERENCE","ATTACHMENT"\n"ALPHA","Alpha Ltd","Change in Auditors","Resignation of statutory auditor\n'
+           'with immediate effect","07-Nov-2026 12:48:45","2026-11-07 12:48:45","2026-11-07 12:48:47","00:00:02",'
+           '"https://nsearchives.nseindia.com/corporate/ALPHA_07112026.pdf"\n').encode("utf-8")
+    blob.put("inbox/nse/announcements/20261107-1251-CF-AN.csv", csv)
+    out = ingestion.run(store=store, log=logging.getLogger("t"))
+    assert out["new_filings"] == 1 and out["new_alerts"] == 1
+    f = store.list("filings")[0]
+    assert f["symbol"] == "ALPHA" and f["date"] == "07-Nov-2026 12:48:45" and f["attachment"].endswith(".pdf")
+    assert blob.list("inbox/nse/announcements/") == []
+
+
+def test_bse_export_and_bad_file():
+    from mb.announcements import parse
+    rows, rep = parse(b"Security Code,Security Name,Category,Headline,News Date\n500001,X Ltd,Company Update,Credit rating downgrade,06-11-2026\n", "bse.csv")
+    assert rep["exchange"] == "BSE" and rows[0]["symbol"] == "500001"
+    with pytest.raises(ValueError):
+        parse(b"a,b\n1,2\n", "x.csv")
 
 
 def test_runner_respects_pause_and_kill(env, monkeypatch):
@@ -108,6 +187,9 @@ def test_portal_pages(env, monkeypatch):
     assert r.status_code == 303 and "Imported" in r.headers["location"]
     c.post("/agents/screener/run")
     assert started == ["screener"]
+    r = c.post("/data/announcements", files={"file": ("ann.csv", NSE_ANN, "text/csv")}, follow_redirects=False)
+    assert "Queued%203%20NSE" in r.headers["location"] and started[-1] == "ingestion"
+    assert "Waiting to load: 1" in c.get("/data").text
     c.post("/agents/screener/pause")
     assert store.get("agents", "screener")["enabled"] is False
     assert "Resume schedule" in c.get("/").text
