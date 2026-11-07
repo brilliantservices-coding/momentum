@@ -5,14 +5,16 @@
 <div class="card stat"><div class="n">{% if week %}{{ regime_pill(week.regime.regime) }}{% else %}–{% endif %}</div><div class="l">Market regime{% if week %} · max {{ (exposure[week.regime.regime]*100)|int }}% in stocks{% endif %}</div></div>
 <div class="card stat"><div class="n">{{ inr(totals.total) }}</div><div class="l">{{book_name}} book value (cost basis + last prices)</div></div>
 <div class="card stat"><div class="n">{{ pct(totals.return_pct) }}</div><div class="l">Since start ({{ inr(book.capital) }})</div></div>
-<div class="card stat"><div class="n">{{ "%.0f"|format(totals.exposure_pct) }}%</div><div class="l">In stocks · {{rows|length}} positions</div></div>
+<div class="card stat"><div class="n">{{ "%.0f"|format(totals.exposure_pct) }}%</div><div class="l">In stocks · {{rows|rejectattr('liquid')|list|length}} positions</div></div>
+<div class="card stat"><div class="n">{{ inr(totals.parked) }}</div><div class="l">Parked in LIQUIDBEES</div></div>
 <div class="card stat"><div class="n">{{ "%.1f"|format(totals.heat_pct) }}%</div><div class="l">Open risk (heat), cap 6%</div></div>
 </div>
 {% if week %}<h2>Latest run: week ending {{week.week}} <span class="pill {{week.status}}">{{week.status|replace('_',' ')}}</span></h2>
 <div class="card"><p style="margin-top:0">Nifty 500 {{ "%.0f"|format(week.regime.index_close) }} vs 40-week MA {{ "%.0f"|format(week.regime.ma40w) }} ({{'rising' if week.regime.ma40_rising else 'falling'}}); {{ "%.0f"|format(week.regime.breadth*100) }}% of Nifty 500 stocks above their 200 DMA.
 {% if week.regime.raw != week.regime.regime %}<br><span class="small">This week's reading is {{week.regime.raw}}, but an upgrade needs two weekly closes, so it stays {{week.regime.regime}}.</span>{% endif %}</p>
 <p class="small">{{week.counts.passing}} of {{week.counts.universe}} stocks pass every filter · {{week.changes|length}} proposed change(s) · data as of {{week.data_as_of}}</p>
-<a class="btn" href="/weeks/{{week.week}}">Open the week</a></div>{% else %}
+<a class="btn" href="/weeks/{{week.week}}">Open the week</a></div>
+{% if week.summary %}<h2>Why this week looks the way it does</h2>{% include "_summary.html" %}{% endif %}{% else %}
 <div class="card empty">No weekly run yet. It runs every Saturday at 08:00 IST, or start one now.</div>{% endif %}
 <h2>Data freshness</h2>
 <div class="tablewrap"><table><tbody>

@@ -7,6 +7,7 @@
 <div class="card stat"><div class="n">{{ "%.1f"|format(w.book.heat_after_pct) }}%</div><div class="l">Open risk after (cap 6%)</div></div>
 <div class="card stat"><div class="n">{{ inr(w.book.cash_after) }}</div><div class="l">Cash after</div></div>
 </div>
+{% if w.summary %}<h2>Summary: what the run decided and why</h2>{% include "_summary.html" %}{% endif %}
 {% if w.funnel %}<h2>Funnel: from the Nifty 500 to this week's buys</h2>{% set week = w %}{% include "_funnel.html" %}
 <p><a class="btn" href="/weeks/{{w.week}}/screen">See every stock and its factors</a></p>{% endif %}
 <h2>Proposed changes</h2>
@@ -15,7 +16,7 @@
 <div class="tablewrap"><table class="changes"><thead><tr><th>OK</th><th>Action</th><th>Stock</th><th>Qty</th><th>Price</th><th>Stop</th><th>Why</th></tr></thead><tbody>
 {% for c in w.changes %}{% set pending = w.status=='pending' %}{% set dec = (w.decisions or {}).get(c.id, {}) %}
 <tr><td data-label="OK">{% if pending %}<input type="checkbox" name="ok_{{c.id}}" checked aria-label="approve {{c.symbol}}">{% else %}{{ '<span class="tick">✓</span>'|safe if c.id in (w.applied or []) else '<span class="cross">✗</span>'|safe }}{% endif %}</td>
-<td data-label="Action"><span class="pill act-{{c.type}}">{{ {'buy':'Buy','sell':'Sell','trim':'Trim','raise_stop':'Raise stop'}[c.type] }}</span></td>
+<td data-label="Action"><span class="pill act-{{c.type}}">{{ {'buy':'Buy','sell':'Sell','trim':'Trim','raise_stop':'Raise stop','park':'Park cash','unpark':'Unpark'}[c.type] }}</span></td>
 <td data-label="Stock"><strong>{{c.symbol}}</strong>{% if c.sector %}<div class="small">{{c.sector}}</div>{% endif %}{% if c.rank %}<div class="small">rank {{c.rank}}</div>{% endif %}</td>
 <td data-label="Qty" class="num">{% if pending and c.type!='raise_stop' %}<input type="text" name="qty_{{c.id}}" value="{{c.qty}}" size="5" inputmode="numeric">{% else %}{{dec.qty or c.qty}}{% endif %}</td>
 <td data-label="Price" class="num">{% if pending and c.type!='raise_stop' %}<input type="text" name="price_{{c.id}}" value="{{c.price}}" size="8" inputmode="decimal" title="Enter your actual fill price">{% else %}{{dec.price or c.price}}{% endif %}

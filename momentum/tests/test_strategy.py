@@ -129,3 +129,29 @@ def test_ist_and_next_run():
     assert ist("2026-11-06") == "Fri 06 Nov 2026"
     assert next_run(datetime(2026, 11, 7, 1, 0, tzinfo=timezone.utc)) == "Sat 07 Nov 2026, 08:00 IST"
     assert next_run(datetime(2026, 11, 7, 3, 0, tzinfo=timezone.utc)) == "Sat 14 Nov 2026, 08:00 IST"
+
+
+def test_liquid_parking_and_summary():
+    px = market()
+    c = cfg()
+    m = ranked(px, c)
+    book = {"cash": 1_000_000, "positions": {}, "peak_value": 1_000_000}
+    p = strategy.propose(m, book, {"regime": "red", "raw": "red", "index_close": 1, "ma40w": 2, "above_ma40": False,
+                                   "ma40_rising": False, "breadth": 0.3}, c, today=date(2026, 11, 7), liquid_price=1000.0)
+    park = [x for x in p["changes"] if x["type"] == "park"]
+    assert park and park[0]["qty"] == 990 and p["book"]["cash_after"] == 10_000
+    p["regime"] = {"regime": "red", "raw": "red", "index_close": 1, "ma40w": 2, "above_ma40": False,
+                   "ma40_rising": False, "breadth": 0.3}
+    p["funnel"] = strategy.funnel(m)
+    text = " ".join(x["text"] for x in strategy.summarize(p, c))
+    assert "Red regime rule" in text and "LIQUIDBEES" in text and "below a falling 40-week average" in text
+
+    # next week in Green: parked units are sold to fund the buys
+    book = {"cash": 10_000, "positions": {"LIQUIDBEES": {"qty": 990, "entry": 1000.0, "stop": 0, "liquid": True,
+                                                         "entry_date": "2026-11-09"}}}
+    p = strategy.propose(m, book, {"regime": "green"}, c, today=date(2026, 11, 14), liquid_price=1000.0)
+    buys = [x for x in p["changes"] if x["type"] == "buy"]
+    assert buys and p["changes"][0]["type"] == "unpark"
+    assert not any(x["symbol"] == "LIQUIDBEES" and x["type"] == "sell" for x in p["changes"])
+    spent = sum(b["qty"] * b["price"] for b in buys)
+    assert abs(p["liquid"]["qty_after"] * 1000 + p["book"]["cash_after"] + spent - 1_000_000) < 5  # prices are rounded to paise

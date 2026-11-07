@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from .config import BOOK, DEFAULTS
+from .config import BOOK, DEFAULTS, LIQUID
 from .store import get_store, now_iso
 
 
@@ -51,7 +51,13 @@ def sign_off(week: dict, decisions: dict[str, dict], user: str, note: str = "", 
         price = float(d.get("price") or c.get("price") or 0)
         entry = {"at": now_iso(), "week": week["week"], "change": c["id"], "type": c["type"], "symbol": sym,
                  "qty": qty, "price": price, "by": user, "reasons": c.get("reasons", []), "book": BOOK}
-        if c["type"] == "buy":
+        if c["type"] == "park":
+            old = pos.get(sym, {"qty": 0, "entry": price})
+            tot = old["qty"] + qty
+            pos[sym] = {"qty": tot, "entry": round((old["entry"] * old["qty"] + price * qty) / tot, 4) if tot else price,
+                        "stop": 0.0, "entry_date": old.get("entry_date", today), "sector": "Liquid fund", "liquid": True}
+            cash -= qty * price
+        elif c["type"] == "buy":
             stop = float(d.get("stop") or c["stop"])
             old = pos.get(sym)
             if old:  # averaging into an existing line
@@ -64,7 +70,7 @@ def sign_off(week: dict, decisions: dict[str, dict], user: str, note: str = "", 
                             "max_close": price, "setup": c.get("setup")}
             cash -= qty * price
             entry["stop"] = stop
-        elif c["type"] in ("sell", "trim"):
+        elif c["type"] in ("sell", "trim", "unpark"):
             p = pos.get(sym)
             if not p:
                 continue

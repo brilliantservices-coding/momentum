@@ -16,6 +16,7 @@ from datetime import date, datetime, timedelta, timezone
 from . import data as mdata
 from . import signals, strategy
 from .book import get_book, get_cfg, save_book
+from .config import LIQUID
 from .store import get_store, now_iso
 
 log = logging.getLogger("mom.weekly")
@@ -50,11 +51,12 @@ def build(px: dict, sectors: dict, store, today: date) -> dict:
     m = signals.metrics(px)
     quality = quality_from_fundamentals(store, sectors)
     m = strategy.rank_universe(m, cfg, quality or None, sectors)
-    proposal = strategy.propose(m, book, reg, cfg, today=today)
+    proposal = strategy.propose(m, book, reg, cfg, today=today, liquid_price=px.get("liquid_price"))
     proposal["regime"] = reg
     proposal["funnel"] = strategy.funnel(m) + proposal.pop("funnel_tail")
     proposal["screen"] = strategy.screen_rows(m, proposal.pop("setups"))
     proposal["factors"] = [{"key": k, "label": l} for k, l in m.attrs["factors"]]
+    proposal["summary"] = strategy.summarize(proposal, cfg)
     fmeta = store.get("control", "fundamentals") or {}
     proposal["quality_source"] = (f"{len(quality)} stocks from the Screener export uploaded {fmeta.get('imported', '')}"
                                   if quality else "none uploaded")
@@ -98,7 +100,12 @@ def run(force: bool = False, px: dict | None = None, sectors: dict | None = None
                 universe_updated = cached.get("updated")
         log.info("universe: %d symbols", len(sectors))
         if px is None:
-            px = mdata.prices(sorted(sectors))
+            px = mdata.prices(sorted(sectors) + [LIQUID])
+        if LIQUID in px["close"].columns:  # the parking ETF is priced but never screened
+            last = px["close"][LIQUID].dropna()
+            px["liquid_price"] = float(last.iloc[-1]) if len(last) else None
+            for k in ("close", "high", "low", "volume"):
+                px[k] = px[k].drop(columns=[LIQUID])
         log.info("prices: %d symbols with data, last bar %s", px["close"].shape[1], px["close"].index[-1].date())
         proposal, m, book = build(px, sectors, store, today)
 

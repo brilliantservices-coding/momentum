@@ -13,6 +13,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 BOOK = "Momentum"  # name of the holding/book this strategy's trades are kept in
+LIQUID = "LIQUIDBEES"  # Nippon India ETF Liquid BeES: where cash not needed for stocks is parked
 
 
 def _list(name: str) -> tuple[str, ...]:
@@ -46,6 +47,8 @@ DEFAULTS = {
     "rs_rating_min": 70,
     "extended_pct": 5.0,         # more than this above the pivot = extended, watchlist only
     "exclude": "",               # symbols to never buy (ASM/GSM, red flags), comma separated
+    "park_in_liquid": 1,         # 1 = park idle cash in LIQUIDBEES, 0 = keep it as cash
+    "cash_buffer_pct": 1.0,      # % of the book kept as plain cash for charges and rounding
 }
 REGIME_EXPOSURE = {"green": 1.0, "amber": 0.55, "red": 0.20}
 REGIME_LEVEL = {"red": 0, "amber": 1, "green": 2}
