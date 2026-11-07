@@ -109,7 +109,7 @@ def test_trendlyne_data_downloader_xlsx():
     from mb.fundamentals import parse
     from mb.rules import pass1
     cols = ["Stock Name", "NSE Code", "BSE Code", "Stock Code", "ISIN", "Industry Name", "sector_name", "Current Price",
-            "Market Capitalization", "Market Capitalization", "PE TTM", "ROCE Annual %", "ROCE Annual 3Yr Avg %",
+            "Market Capitalization", "Market Capitalization", "PE TTM Price to Earnings", "ROCE Annual %", "ROCE Annual 3Yr Avg %",
             "Revenue Annual 3Yr Growth %", "Net Profit 3Yr Growth %", "Revenue Growth Qtr YoY %",
             "Cash from Operating Activity Annual", "Operating Cash Flow 3Yr Growth %", "EBITDA Annual",
             "Net Profit Annual", "Operating Revenue Annual", "Total Debt Annual", "Cash Plus Cash Equivalents Annual",
@@ -131,6 +131,8 @@ def test_trendlyne_data_downloader_xlsx():
     assert a["debt"] == 100 and a["net_worth"] == 700 and a["mcap"] == 3200
     assert "receivables" not in a and "cfo_3y" not in a  # annual CFO is not a 3-year sum, so it isn't mapped
     assert "revenue_annual" not in rep["recognised"] and "pledge" in rep["recognised"]
+    assert {"debtor_days", "inventory_days", "avg_traded_value_cr", "pe"} <= set(rep["recognised"])
+    assert a["shares_now"] == 6.3 and "debtor_days" not in rep["missing"]
     assert pass1(a)["known"] >= 4
     # A title row above the header (some exports) is skipped.
     buf2 = io.BytesIO()

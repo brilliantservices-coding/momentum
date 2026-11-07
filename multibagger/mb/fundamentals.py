@@ -17,7 +17,7 @@ ALIASES: dict[str, list[str]] = {
     "name": ["name", "company", "company name", "stock", "stock name"],
     "price": ["current price", "cmp", "price", "cmp rs", "ltp", "current price rs"],
     "mcap": ["market capitalization", "market cap", "mar cap rs cr", "mcap", "market cap rs cr"],
-    "pe": ["price to earning", "pe", "p e", "price to earnings", "pe ttm"],
+    "pe": ["price to earning", "pe", "p e", "price to earnings", "pe ttm", "pe ttm price to earnings"],
     "sales_cagr_3y": ["revenue annual 3yr growth", "sales growth 3years", "sales growth 3 years", "revenue cagr 3y", "sales cagr 3y"],
     "profit_cagr_3y": ["net profit 3yr growth", "net profit annual 3yr growth", "profit growth 3years", "profit growth 3 years", "profit cagr 3y"],
     "qtr_sales_yoy": ["revenue growth qtr yoy", "yoy quarterly sales growth", "qtr sales var", "qtr sales var percent", "quarterly sales growth yoy"],
@@ -30,7 +30,7 @@ ALIASES: dict[str, list[str]] = {
     "debt": ["debt", "borrowings", "total debt", "total debt annual"],
     "cash": ["cash equivalents", "cash", "cash and equivalents", "cash plus cash equivalents annual"],
     "debt_to_equity": ["debt to equity", "d e", "lt debt to equity ann", "total debt to equity ann", "total debt to total equity annual"],
-    "shares_now": ["number of equity shares", "no of equity shares"],
+    "shares_now": ["number of equity shares", "no of equity shares", "number of shares qtr end"],
     "shares_3y_back": ["number of equity shares 3years back", "number of equity shares 3 years back"],
     "promoter": ["promoter holding", "promoter holding percent", "promoters", "promoter holding latest"],
     "promoter_change": ["change in promoter holding", "change in promoter holding 3years", "promoter holding change 4qtr"],
@@ -125,8 +125,10 @@ def parse(data: bytes, filename: str) -> tuple[dict[str, dict], dict]:
         if rec.get("avg_traded_value_cr") is None and rec.get("volume_1m_avg") and rec.get("price"):
             rec["avg_traded_value_cr"] = rec["volume_1m_avg"] * rec["price"] / 1e7
         out[key] = rec
-    report = {"rows": len(out), "recognised": sorted(set(mapping) - DERIVED_INPUTS),
-              "missing": sorted(set(ALIASES) - set(mapping) - DERIVED_INPUTS)}
+    derived = {k for rec in out.values() for k in ("debtor_days", "inventory_days", "pledge_prev", "avg_traded_value_cr")
+               if rec.get(k) is not None}
+    found = (set(mapping) | derived) - DERIVED_INPUTS
+    report = {"rows": len(out), "recognised": sorted(found), "missing": sorted(set(ALIASES) - found - DERIVED_INPUTS)}
     return out, report
 
 
