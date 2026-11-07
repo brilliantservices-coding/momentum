@@ -79,7 +79,10 @@ The token from `claude setup-token` lasts about a year. When AI runs fail with a
 ### Fundamentals sources
 - **Yahoo** (Fundamentals agent, Fri 20:00): no action needed. Tunables are env vars on the `mb-fundamentals` job:
   `MB_YAHOO_WORKERS` (3), `MB_YAHOO_MAX_MINUTES` (150), `MB_YAHOO_LIMIT` (0 means all; set it for a quick test).
-  A run cut short by the time budget carries on from the oldest symbols next time.
+  A run cut short by the time budget carries on from the oldest symbols next time. Each week only
+  stocks with new results (seen in the filings) or statements older than 4 weeks get a full download;
+  the rest get a one-request price/market-cap refresh, and stocks far outside ₹200-40,000 cr are checked monthly.
+  The run summary shows the plan (`planned: full/light/skip`) and `minutes`.
 - **Trendlyne** (desktop task, Friday): downloads the "Multibagger fundamentals" data to
   `gs://…-raw/inbox/fundamentals/`, and the Saturday Screener imports it first. If Trendlyne renames a column,
   add the new name to `ALIASES` in `mb/fundamentals.py`. The Data page shows which columns were recognised.

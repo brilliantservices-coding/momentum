@@ -117,9 +117,20 @@ def metrics(info: dict, income, balance, cashflow, quarterly=None) -> dict:
     return {k: (round(v, 4) if isinstance(v, float) else v) for k, v in rec.items()}
 
 
-def fetch(symbol: str, mcap_min_cr: float, mcap_max_cr: float, retries: int = 3) -> dict | None:
-    """Fetches one NSE symbol. Statements are only downloaded when the market cap is in range,
-    which roughly halves the requests. Returns None when Yahoo has nothing for it."""
+def info_fields(info: dict) -> dict:
+    """The fields that move weekly (price, size, valuation, liquidity), from the summary call alone."""
+    price = info.get("currentPrice") or info.get("regularMarketPrice") or info.get("previousClose")
+    vol = info.get("averageVolume") or info.get("averageDailyVolume3Month")
+    insiders = info.get("heldPercentInsiders")
+    rec = {"name": info.get("longName") or info.get("shortName"), "price": price, "mcap": _cr(info.get("marketCap")),
+           "pe": info.get("trailingPE"), "promoter": 100 * insiders if insiders is not None else None,
+           "avg_traded_value_cr": (vol * price / CR) if vol and price else None, "volume_1m_avg": vol}
+    return {k: (round(v, 4) if isinstance(v, float) else v) for k, v in rec.items()}
+
+
+def fetch(symbol: str, mcap_min_cr: float, mcap_max_cr: float, retries: int = 3, light: bool = False) -> dict | None:
+    """Fetches one NSE symbol. Statements are only downloaded when the market cap is in range and
+    `light` is False; a light fetch is one request. Returns None when Yahoo has nothing for it."""
     import yfinance as yf
 
     for attempt in range(retries):
@@ -130,7 +141,9 @@ def fetch(symbol: str, mcap_min_cr: float, mcap_max_cr: float, retries: int = 3)
             if not info or mcap is None:
                 return None
             if not (mcap_min_cr <= mcap <= mcap_max_cr):
-                return {"mcap": mcap, "name": info.get("longName") or info.get("shortName"), "out_of_range": True}
+                return {**info_fields(info), "out_of_range": True}
+            if light:
+                return {**info_fields(info), "light": True}
             return metrics(info, t.income_stmt, t.balance_sheet, t.cashflow, t.quarterly_income_stmt)
         except Exception as exc:
             if "Too Many Requests" in str(exc) or "429" in str(exc):

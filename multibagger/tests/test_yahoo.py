@@ -53,7 +53,7 @@ def test_fundamentals_agent(env):
     for s in ["ALPHA", "BIGCO", "GONE", "BROKEN"]:
         store.set("universe", s, {"name": s})
 
-    def fake(sym, lo, hi):
+    def fake(sym, lo, hi, light=False):
         if sym == "GONE":
             return None
         if sym == "BROKEN":
@@ -88,7 +88,7 @@ def test_trendlyne_overlay_wins_both_orders(env):
     from mb.yahoo import metrics
     store, blob = env
     store.set("universe", "ALPHA", {"name": "A"})
-    fake = lambda sym, lo, hi: metrics(INFO, INCOME, BALANCE, CASH)  # noqa: E731
+    fake = lambda sym, lo, hi, light=False: metrics(INFO, INCOME, BALANCE, CASH)  # noqa: E731
     fundamentals.run(store=store, log=LOG, fetch=fake)
     assert store.get("fundamentals", "ALPHA").get("pledge") is None
     blob.put("inbox/fundamentals/trendlyne-20261107.csv", TL)  # the Friday desktop task's upload
@@ -137,3 +137,32 @@ def test_trendlyne_data_downloader_xlsx():
     pd.DataFrame([["Trendlyne Data Downloader"] + [None] * 2, ["NSE Code", "Stock Name", "PE TTM"], ["BETA", "Beta", 12]]
                  ).to_excel(buf2, index=False, header=False)
     assert parse(buf2.getvalue(), "t.xlsx")[0]["BETA"]["pe"] == 12
+
+
+def test_refresh_plan_skips_and_light_refreshes(env):
+    from mb.agents import fundamentals
+    from mb.yahoo import info_fields, metrics
+    store, _ = env
+    for s in ["ALPHA", "BIGCO", "TINY", "RESULTS"]:
+        store.set("universe", s, {"name": s})
+    calls = []
+
+    def fake(sym, lo, hi, light=False):
+        calls.append((sym, light))
+        if sym == "BIGCO":
+            return {"mcap": 90000.0, "out_of_range": True}
+        if sym == "TINY":
+            return {"mcap": 50.0, "out_of_range": True}
+        if light:
+            return {**info_fields({**INFO, "currentPrice": 600.0}), "light": True}
+        return metrics(INFO, INCOME, BALANCE, CASH)
+    first = fundamentals.run(store=store, log=LOG, fetch=fake)
+    assert first["planned"] == {"full": 4, "light": 0, "skip": 0} and first["with_statements"] == 2
+    store.set("filings", "f1", {"symbol": "RESULTS", "category": "Outcome of Board Meeting",
+                                "subject": "Unaudited Financial Results for Q2", "ingested": "2099-01-01T00:00:00+00:00"})
+    calls.clear()
+    second = fundamentals.run(store=store, log=LOG, fetch=fake)
+    assert second["planned"] == {"full": 1, "light": 1, "skip": 2}
+    assert sorted(calls) == [("ALPHA", True), ("RESULTS", False)]
+    a = store.get("fundamentals", "ALPHA")
+    assert a["price"] == 600.0 and a["roce"] is not None  # light refresh kept the statement fields
