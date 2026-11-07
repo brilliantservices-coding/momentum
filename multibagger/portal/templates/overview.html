@@ -1,0 +1,29 @@
+{% extends "base.html" %}{% block body %}
+<h1>Overview</h1><p class="sub">What the agents found, what they're doing, and what this month has cost.</p>
+<div class="grid">
+<a class="card stat" href="/candidates" style="text-decoration:none;color:inherit"><div class="n">{{stats.candidates}}</div><div class="l">Pass 1 survivors</div></a>
+<a class="card stat" href="/alerts" style="text-decoration:none;color:inherit"><div class="n" style="color:var(--bad)">{{stats.hard_alerts}}</div><div class="l">Open hard red flags</div></a>
+<a class="card stat" href="/alerts" style="text-decoration:none;color:inherit"><div class="n">{{stats.soft_alerts}}</div><div class="l">Open soft flags</div></a>
+<a class="card stat" href="/filings" style="text-decoration:none;color:inherit"><div class="n">{{stats.filings_7d}}</div><div class="l">Filings ingested (7 days)</div></a>
+<a class="card stat" href="/approvals" style="text-decoration:none;color:inherit"><div class="n">{{stats.pending}}</div><div class="l">Proposals awaiting you</div></a>
+<a class="card stat" href="/costs" style="text-decoration:none;color:inherit"><div class="n">{% if cost.cost is not none %}{{ "%.0f"|format(cost.cost) }}{% else %}–{% endif %}</div>
+<div class="l">{{cost.currency}} spent of {{ "%.0f"|format(cost.budget) }} this month</div>
+{% if cost.pct is not none %}<div class="bar"><i class="{{'bad' if cost.pct>=90 else 'warn' if cost.pct>=50 else ''}}" style="width:{{ [cost.pct,100]|min }}%"></i></div>{% endif %}</a>
+</div>
+{% if not fundamentals %}<div class="banner" style="margin-top:16px">No fundamentals loaded yet. The screener and the structured red-flag checks need a Screener-style export: <a href="/data">upload one on the Data page</a>.</div>{% endif %}
+<h2>Agents</h2>
+<div class="agents">{% for a in agents %}<div class="card agent">
+<h3><a href="/agents/{{a.id}}" style="color:inherit">{{a.name}}</a></h3><p>{{a.description}}</p>
+<div class="meta"><span class="pill {{'on' if a.enabled else 'off'}}">{{'scheduled' if a.enabled else 'paused'}}</span>
+<span>{{a.cadence}} · <code>{{a.schedule}}</code></span>
+{% if a.last_status %}<span class="pill {{a.last_status}}">{{a.last_status}}</span><span>{{(a.last_finished or a.last_started or '')[:16].replace('T',' ')}} UTC</span>{% else %}<span>never run</span>{% endif %}</div>
+<div class="row">
+<form method="post" action="/agents/{{a.id}}/run"><button class="primary">Run now</button></form>
+<form method="post" action="/agents/{{a.id}}/stop"><button>Stop</button></form>
+<form method="post" action="/agents/{{a.id}}/{{'pause' if a.enabled else 'resume'}}"><button>{{'Pause schedule' if a.enabled else 'Resume schedule'}}</button></form>
+</div></div>{% endfor %}</div>
+<h2>Emergency stop</h2>
+<div class="card"><p class="small" style="margin-top:0">Pauses every schedule and cancels running jobs. It also trips automatically when the month's GCP spend reaches the budget.</p>
+<form method="post" action="/kill">{% if kill.killed %}<input type="hidden" name="action" value="release"><button class="primary">Release kill switch</button>
+{% else %}<input type="hidden" name="action" value="kill"><button class="danger">Stop everything</button>{% endif %}</form></div>
+{% endblock %}

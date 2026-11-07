@@ -1,0 +1,27 @@
+# Agent registry. The portal, the runner and the deploy script all read this file.
+# Schedules are cron in Asia/Kolkata time. Phase 2 agents ship disabled until the LLM layer is built.
+agents:
+  - id: universe
+    name: Universe builder
+    description: Downloads the NSE equity list (symbol, ISIN, name, listing date) and keeps the universe table fresh.
+    schedule: "0 6 * * 1"        # Mondays 06:00
+    cadence: weekly
+    phase: 1
+  - id: ingestion
+    name: Ingestion agent
+    description: Pulls new NSE/BSE corporate announcements, stores them with metadata, and saves attachments for watchlist names to Cloud Storage.
+    schedule: "30 19 * * 1-5"    # weekdays 19:30, after market close
+    cadence: daily
+    phase: 1
+  - id: forensic
+    name: Forensic agent
+    description: Runs the red-flag checklist on structured fundamentals and new filings. Hard flags raise alerts within a day.
+    schedule: "0 20 * * 1-5"     # weekdays 20:00
+    cadence: daily
+    phase: 1
+  - id: screener
+    name: Screener agent
+    description: Runs the Pass 1 quantitative screen on the uploaded fundamentals export and hands survivors to the watchlist.
+    schedule: "0 7 * * 6"        # Saturdays 07:00
+    cadence: weekly
+    phase: 1
