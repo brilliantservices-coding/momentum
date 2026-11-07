@@ -6,7 +6,7 @@
 <div class="card funnel">{% set top = (stages|map(attribute='n')|max) or 1 %}
 {% for s in stages %}<a class="fstep {{'on' if s.idx and s.idx==stage}}" {% if s.idx %}href="/funnel?stage={{s.idx}}" title="Show companies that stopped here"{% endif %}>
 <span class="flabel">{{s.name}}</span><span class="fbar"><i style="width:{{ [100*s.n/top, 0.5 if s.n else 0]|max }}%"></i></span><span class="num">{{ '{:,}'.format(s.n) }}</span></a>{% endfor %}
-{% if stages[1].n == 0 %}<p class="small" style="margin-bottom:0">Nothing has been screened yet because no fundamentals export has been uploaded. Every stage after the universe stays at 0 until you <a href="/data">upload one</a>.</p>{% endif %}
+{% if stages[1].n == 0 %}<p class="small" style="margin-bottom:0">Nothing has been screened yet because no fundamentals are loaded. Run the Fundamentals agent (or <a href="/data">upload an export</a>), then the Screener agent.</p>{% endif %}
 </div>
 <h2>Factors across screened companies</h2>
 {% if stages[1].n %}<div class="tablewrap"><table><tr><th>Factor</th><th>Favourable</th><th>Unfavourable</th><th>No data</th><th></th></tr>

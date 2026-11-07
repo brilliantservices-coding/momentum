@@ -96,14 +96,15 @@ COMMON_ENV="MB_DRIVE_INBOX_ID=$DRIVE_INBOX_ID,MB_BACKEND=gcp,GOOGLE_CLOUD_PROJEC
 
 say "Agent jobs and schedules"
 # Reads id|schedule|default_enabled from agents.yaml without needing Python locally.
-awk '/^  - id:/{if(id)print id"|"cron"|"en; id=$3; cron=""; en="true"}
+awk '/^  - id:/{if(id)print id"|"cron"|"en"|"to; id=$3; cron=""; en="true"; to="3600"}
      /^    schedule:/{match($0,/"[^"]+"/); cron=substr($0,RSTART+1,RLENGTH-2)}
-     /^    default_enabled:/{en=$2} END{if(id)print id"|"cron"|"en}' agents.yaml |
-while IFS='|' read -r AGENT CRON DEFAULT_ON; do
+     /^    timeout:/{to=$2}
+     /^    default_enabled:/{en=$2} END{if(id)print id"|"cron"|"en"|"to}' agents.yaml |
+while IFS='|' read -r AGENT CRON DEFAULT_ON TIMEOUT; do
   echo "-- $AGENT ($CRON)"
   $G run jobs deploy "mb-$AGENT" --region="$REGION" --image="$IMAGE" \
     --command=python --args="-m,mb.runner,$AGENT" --service-account="$SA_AGENTS" \
-    --set-env-vars="$COMMON_ENV" "${SECRET_FLAGS[@]}" --cpu=1 --memory=1Gi --max-retries=0 --task-timeout=3600 --tasks=1 --labels="$LABELS" >/dev/null
+    --set-env-vars="$COMMON_ENV" "${SECRET_FLAGS[@]}" --cpu=1 --memory=1Gi --max-retries=0 --task-timeout="$TIMEOUT" --tasks=1 --labels="$LABELS" >/dev/null
   URI="https://run.googleapis.com/v2/projects/$PROJECT_ID/locations/$REGION/jobs/mb-$AGENT:run"
   if exists $G scheduler jobs describe "mb-$AGENT-schedule" --location="$REGION"; then
     $G scheduler jobs update http "mb-$AGENT-schedule" --location="$REGION" --schedule="$CRON" \

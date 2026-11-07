@@ -36,7 +36,7 @@ def test_funnel_page(env):
     store, blob = env
     c = TestClient(app)
     page = c.get("/funnel").text
-    assert "no fundamentals export has been uploaded" in page and "Not uploaded yet" in page
+    assert "no fundamentals are loaded" in page and "Not loaded yet" in page
     import_file(store, blob, CSV, "screen.csv")
     forensic.run(store=store, log=LOG)
     screener.run(store=store, log=LOG)
@@ -52,5 +52,5 @@ def test_funnel_page(env):
     assert "GAMMA" in c.get("/funnel?stage=1").text and "ALPHA" not in c.get("/funnel?stage=1").text
     assert "BETA" in c.get("/funnel?q=beta").text
     home = c.get("/").text
-    assert "Screened (fundamentals uploaded)" in home and "IST" in home
+    assert "Screened (fundamentals loaded)" in home and "IST" in home
     assert "UTC" not in home and "UTC" not in c.get("/data").text

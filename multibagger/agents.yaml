@@ -19,6 +19,13 @@ agents:
     schedule: "0 20 * * 1,4"     # Mon and Thu 20:00
     cadence: twice weekly
     phase: 1
+  - id: fundamentals
+    name: Fundamentals agent
+    description: Refreshes growth, ROCE, cash flow, debt, holdings and working-capital numbers for the NSE universe from Yahoo Finance, ready for the Saturday screen. No pledge data on Yahoo.
+    schedule: "0 20 * * 5"        # Fridays 20:00
+    cadence: weekly
+    phase: 1
+    timeout: 10800
   - id: screener
     name: Screener agent
     description: Runs the Pass 1 quantitative screen on the uploaded fundamentals export and hands survivors to the watchlist.

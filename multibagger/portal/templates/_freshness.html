@@ -4,9 +4,9 @@
 <p class="small" style="margin:4px 0 0">{{ '{:,}'.format(fresh.ann.count or 0) }} filings from {{fresh.ann.first|ist('%d %b %Y')}}. Last loaded {{fresh.ann.last_loaded|ist}}.</p>
 {% else %}<p style="margin:0"><strong>None loaded yet.</strong></p>{% endif %}
 <p class="small" style="margin:4px 0 0">Your PC downloads the last 7 days from NSE every Mon and Thu at 19:00 IST (Claude desktop app must be open); the ingestion agent loads them at 19:30. Nothing to upload unless you want to fill a gap.</p></div>
-<div class="card"><h3 style="margin:0 0 6px;font-size:15px">Fundamentals <span class="pill {{'off' if fresh.fund_stale else ''}}">manual upload</span></h3>
-{% if fresh.fund %}<p style="margin:0">Uploaded <strong>{{fresh.fund.imported|ist}}</strong>{% if fresh.fund_stale %} <span class="pill soft">{{ '%.0f'|format(fresh.fund_age) }} days old: upload a fresh export</span>{% endif %}</p>
-<p class="small" style="margin:4px 0 0">{{fresh.fund.rows}} companies from {{fresh.fund.file}}.</p>
-{% else %}<p style="margin:0"><strong>Not uploaded yet.</strong> The screener can't consider any stock until you do.</p>{% endif %}
-<p class="small" style="margin:4px 0 0">Export a Screener.in screen and <a href="/data">upload it on the Data page</a>, ideally monthly and after each results season.</p></div>
+<div class="card"><h3 style="margin:0 0 6px;font-size:15px">Fundamentals {% if (fresh.fund or {}).source == 'yahoo' %}<span class="pill on">automatic</span>{% else %}<span class="pill {{'off' if fresh.fund_stale}}">upload or Yahoo agent</span>{% endif %}</h3>
+{% if fresh.fund %}<p style="margin:0">Updated <strong>{{fresh.fund.imported|ist}}</strong>{% if fresh.fund_stale %} <span class="pill soft">{{ '%.0f'|format(fresh.fund_age) }} days old</span>{% endif %}</p>
+<p class="small" style="margin:4px 0 0">{{fresh.fund.rows}} companies from {{fresh.fund.file}}{% if fresh.fund.with_statements is defined %}, {{fresh.fund.with_statements}} with full financial statements (the rest are outside the ₹400-22,000 cr range){% endif %}.</p>
+{% else %}<p style="margin:0"><strong>Not loaded yet.</strong> The screener can't consider any stock until the Fundamentals agent runs (or you upload an export).</p>{% endif %}
+<p class="small" style="margin:4px 0 0">The Fundamentals agent refreshes them from Yahoo Finance every Friday at 20:00 IST, before Saturday's screen. Yahoo has no promoter pledge data; uploading a Screener.in export on the <a href="/data">Data page</a> fills that in.</p></div>
 </div>

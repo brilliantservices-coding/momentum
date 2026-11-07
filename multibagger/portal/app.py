@@ -87,7 +87,8 @@ def _freshness():
     ann_age = age_days((cov or {}).get("last"))
     fund_age = age_days((fund or {}).get("imported"))
     return {"ann": cov, "ann_age": ann_age, "ann_stale": ann_age is None or ann_age > 5,
-            "fund": fund, "fund_age": fund_age, "fund_stale": fund_age is None or fund_age > 30}
+            "fund": fund, "fund_age": fund_age,
+            "fund_stale": fund_age is None or fund_age > (9 if (fund or {}).get("source") == "yahoo" else 30)}
 
 
 def _funnel():
@@ -101,7 +102,7 @@ def _funnel():
         if p.get("action") == "buy starter":
             proposals.setdefault(p.get("symbol"), p)
     held = {h["id"] for h in store.list("holdings")}
-    stage_names = ["Screened (fundamentals uploaded)", "Market cap and liquidity gates", "Enough data (4+ rules known)",
+    stage_names = ["Screened (fundamentals loaded)", "Market cap and liquidity gates", "Enough data (4+ rules known)",
                    "Pass 1 rules met (70%+ of known)", "No open hard red flag: watchlist", "Analysed by the AI analyst",
                    "Conviction 50+ (tier A, B or C)", "Cleared the red team", "Proposed for purchase",
                    "Approved by you / held"]
