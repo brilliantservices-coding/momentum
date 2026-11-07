@@ -10,7 +10,7 @@ import json
 import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -20,6 +20,7 @@ from fastapi.templating import Jinja2Templates
 from mb import control
 from mb.blob import get_blob
 from mb.config import load_agents, settings
+from mb.announcements import parse as parse_announcements
 from mb.fundamentals import import_file
 from mb.store import get_store, now_iso
 
@@ -60,7 +61,7 @@ def render(request: Request, name: str, **ctx):
 
 
 def back(path: str, msg: str = ""):
-    return RedirectResponse(f"{path}{'?msg=' + msg if msg else ''}", status_code=303)
+    return RedirectResponse(f"{path}{'?msg=' + quote(msg) if msg else ''}", status_code=303)
 
 
 def _agents_with_state():
@@ -207,7 +208,8 @@ def approval_decide(request: Request, pid: str, decision: str = Form(...), note:
 def data_page(request: Request, msg: str = ""):
     store = get_store()
     return render(request, "data.html", fundamentals=store.get("control", "fundamentals"),
-                  universe=len(store.list("universe")), msg=msg)
+                  universe=len(store.list("universe")), inbox=get_blob().list("filings/inbox/"),
+                  processed=get_blob().list("filings/processed/")[-5:], msg=msg)
 
 
 @app.post("/data/fundamentals")
@@ -220,6 +222,21 @@ async def upload_fundamentals(file: UploadFile = File(...)):
     except Exception as exc:
         return back("/data", f"Import failed: {exc}")
     return back("/data", f"Imported {report['rows']} companies")
+
+
+@app.post("/data/announcements")
+async def upload_announcements(file: UploadFile = File(...)):
+    data = await file.read()
+    name = (file.filename or "announcements.csv").replace("/", "_")
+    if len(data) > 20_000_000:
+        return back("/data", "File too large (20 MB max)")
+    try:
+        _, report = parse_announcements(data, name)  # validate before queueing
+    except Exception as exc:
+        return back("/data", f"Import failed: {exc}")
+    get_blob().put(f"filings/inbox/{now_iso().replace(':', '')}-{name}", data, "text/csv")
+    control.run_now("ingestion")
+    return back("/data", f"Queued {report['rows']} {report['exchange']} announcements; the ingestion agent is loading them now")
 
 
 @app.get("/costs", response_class=HTMLResponse)

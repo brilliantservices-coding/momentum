@@ -1,6 +1,5 @@
 import base64
 import json
-from datetime import date
 
 import pytest
 
@@ -41,26 +40,35 @@ def test_import_forensic_screen(env):
     assert not store.get("candidates", "GAMMA")["passed"]
 
 
-def test_ingestion_fallback_and_dedupe(env):
+NSE_ANN = b"""SYMBOL,COMPANY NAME,SUBJECT,DETAILS,BROADCAST DATE/TIME,ATTACHMENT
+ALPHA,Alpha Precision Ltd,Resignation of Statutory Auditors,Resignation of Statutory Auditor M/s XYZ & Co,06-Nov-2026 18:02:11,https://nsearchives.nseindia.com/corporate/ALPHA_1.pdf
+BETA,Beta Ltd,Outcome of Board Meeting,Quarterly results,06-Nov-2026 17:00:00,
+GAMMA,Gamma Ltd,Preferential Issue,Allotment of convertible warrants on preferential basis,05-Nov-2026 10:00:00,
+"""
+
+
+def test_announcements_upload_flow(env):
     import logging
 
-    from mb.agents import ingestion
-    store, _ = env
+    from mb.agents import forensic, ingestion
+    store, blob = env
+    blob.put("filings/inbox/a.csv", NSE_ANN)
+    out = ingestion.run(store=store, log=logging.getLogger("t"))
+    assert out == {"files": 1, "new_filings": 3, "new_alerts": 2}
+    assert blob.list("filings/inbox/") == [] and blob.list("filings/processed/") == ["filings/processed/a.csv"]
+    hard = store.list("alerts", where=[("severity", "==", "hard")])
+    assert [a["symbol"] for a in hard] == ["ALPHA"]
+    blob.put("filings/inbox/b.csv", NSE_ANN)  # same rows again
+    assert ingestion.run(store=store, log=logging.getLogger("t"))["new_filings"] == 0
+    assert forensic.run(store=store, log=logging.getLogger("t"))["new_alerts"] == 0  # already flagged
 
-    def nse(a, b):
-        raise ConnectionError("blocked")
 
-    def bse(a, b):
-        return [{"id": "bse-1", "exchange": "BSE", "symbol": "500001", "company": "X", "category": "Company Update",
-                 "subject": "Resignation of Statutory Auditor", "date": str(date.today()), "attachment": None}]
-
-    out = ingestion.run(store=store, log=logging.getLogger("t"), fetchers=[("NSE", nse), ("BSE", bse)])
-    assert out["source"] == "BSE" and out["new"] == 1 and "NSE" in out["source_errors"]
-    out = ingestion.run(store=store, log=logging.getLogger("t"), fetchers=[("BSE", bse)])
-    assert out["new"] == 0
-
-    from mb.agents import forensic
-    assert forensic.run(store=store, log=logging.getLogger("t"))["hard"] == 1
+def test_bse_export_and_bad_file():
+    from mb.announcements import parse
+    rows, rep = parse(b"Security Code,Security Name,Category,Headline,News Date\n500001,X Ltd,Company Update,Credit rating downgrade,06-11-2026\n", "bse.csv")
+    assert rep["exchange"] == "BSE" and rows[0]["symbol"] == "500001"
+    with pytest.raises(ValueError):
+        parse(b"a,b\n1,2\n", "x.csv")
 
 
 def test_runner_respects_pause_and_kill(env, monkeypatch):
@@ -108,6 +116,9 @@ def test_portal_pages(env, monkeypatch):
     assert r.status_code == 303 and "Imported" in r.headers["location"]
     c.post("/agents/screener/run")
     assert started == ["screener"]
+    r = c.post("/data/announcements", files={"file": ("ann.csv", NSE_ANN, "text/csv")}, follow_redirects=False)
+    assert "Queued%203%20NSE" in r.headers["location"] and started[-1] == "ingestion"
+    assert "Waiting to load: 1" in c.get("/data").text
     c.post("/agents/screener/pause")
     assert store.get("agents", "screener")["enabled"] is False
     assert "Resume schedule" in c.get("/").text

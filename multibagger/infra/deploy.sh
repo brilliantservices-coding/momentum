@@ -8,7 +8,6 @@ cd "$(dirname "$0")/.."
 # shellcheck disable=SC1091
 source infra/config.env
 : "${PROJECT_ID:?}" "${REGION:?}" "${BUDGET_AMOUNT:?}" "${BUDGET_CURRENCY:?}" "${OWNER_EMAILS:?}"
-WATCHLIST="${WATCHLIST:-}"
 
 G="gcloud --project=$PROJECT_ID --quiet"
 say() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
@@ -78,7 +77,6 @@ say "Building image $IMAGE (Cloud Build free tier)"
 $G builds submit --region="$REGION" --tag="$IMAGE" .
 
 COMMON_ENV="MB_BACKEND=gcp,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,MB_REGION=$REGION,MB_BUCKET=$BUCKET,MB_MONTHLY_BUDGET_INR=$BUDGET_AMOUNT"
-[ -n "$WATCHLIST" ] && COMMON_ENV="$COMMON_ENV,MB_WATCHLIST=${WATCHLIST//,/;}"
 
 say "Agent jobs and schedules"
 # Reads id/schedule pairs from agents.yaml without needing Python locally.
