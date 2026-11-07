@@ -2,7 +2,8 @@
 
 Two drop points: the Google Drive folder MB_DRIVE_INBOX_ID (filled by a scheduled Cowork task on
 the user's desktop) is copied into the bucket inbox first, then everything in `filings/inbox/`
-(including portal uploads) is loaded. Processed files
+(including portal uploads) and in `inbox/nse/announcements/` (uploaded by the desktop scheduled
+task) is loaded. Processed files
 move to `filings/processed/`. New filings are then checked by the forensic filing rules straight
 away, so a hard red flag shows up minutes after the upload.
 """
@@ -16,6 +17,8 @@ from ..rules import filing_flags
 from ..store import now_iso
 
 INBOX, DONE = "filings/inbox/", "filings/processed/"
+# Where the desktop scheduled task uploads NSE exports with gcloud.
+DESKTOP_INBOX = "inbox/nse/announcements/"
 
 
 def pull_drive(store, blob, log, folder_id: str, session=None) -> int:
@@ -41,7 +44,7 @@ def run(store, log, drive_session=None) -> dict:
         except Exception as exc:  # keep loading portal uploads even if Drive is unreachable
             drive_error = f"{type(exc).__name__}: {exc}"[:300]
             log.error("drive: %s", drive_error)
-    files = blob.list(INBOX)
+    files = blob.list(INBOX) + blob.list(DESKTOP_INBOX)
     stamp, total_new, flagged = now_iso(), 0, 0
     for path in files:
         name = path.rsplit("/", 1)[-1]

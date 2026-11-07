@@ -116,6 +116,24 @@ def test_drive_failure_still_loads_uploads(env, monkeypatch):
     assert out["new_filings"] == 3 and "no drive" in out["drive_error"]
 
 
+def test_desktop_task_export(env):
+    """Real NSE export shape: BOM, every field quoted, DETAILS spanning lines."""
+    import logging
+
+    from mb.agents import ingestion
+    store, blob = env
+    csv = ('\ufeff"SYMBOL","COMPANY NAME","SUBJECT","DETAILS","BROADCAST DATE/TIME","RECEIPT","DISSEMINATION",'
+           '"DIFFERENCE","ATTACHMENT"\n"ALPHA","Alpha Ltd","Change in Auditors","Resignation of statutory auditor\n'
+           'with immediate effect","07-Nov-2026 12:48:45","2026-11-07 12:48:45","2026-11-07 12:48:47","00:00:02",'
+           '"https://nsearchives.nseindia.com/corporate/ALPHA_07112026.pdf"\n').encode("utf-8")
+    blob.put("inbox/nse/announcements/20261107-1251-CF-AN.csv", csv)
+    out = ingestion.run(store=store, log=logging.getLogger("t"))
+    assert out["new_filings"] == 1 and out["new_alerts"] == 1
+    f = store.list("filings")[0]
+    assert f["symbol"] == "ALPHA" and f["date"] == "07-Nov-2026 12:48:45" and f["attachment"].endswith(".pdf")
+    assert blob.list("inbox/nse/announcements/") == []
+
+
 def test_bse_export_and_bad_file():
     from mb.announcements import parse
     rows, rep = parse(b"Security Code,Security Name,Category,Headline,News Date\n500001,X Ltd,Company Update,Credit rating downgrade,06-11-2026\n", "bse.csv")
