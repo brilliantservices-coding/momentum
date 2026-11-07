@@ -115,8 +115,13 @@ def parse(data: bytes, filename: str) -> tuple[dict[str, dict], dict]:
         rec = {}
         for metric, col in mapping.items():
             v = row.get(col)
-            rec[metric] = (str(v).strip() if v is not None and not pd.isna(v) else None) \
-                if metric in ("symbol", "name", "bse_code") else _num(v)
+            if metric in ("symbol", "name", "bse_code"):
+                txt = str(v).strip() if v is not None and not pd.isna(v) else None
+                if txt and metric == "bse_code":
+                    txt = re.sub(r"\.0+$", "", txt)  # Excel numbers come back as 522101.0
+                rec[metric] = txt
+            else:
+                rec[metric] = _num(v)
         key = (rec.get("symbol") or rec.get("bse_code") or rec.get("name") or "").upper()
         key = re.sub(r"[/\s]+", "_", key)
         if not key or key == "NAN":

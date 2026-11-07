@@ -47,3 +47,14 @@ def test_filing_keywords():
     flags = filing_flags("Resignation of Statutory Auditor - M/s ABC & Co")
     assert flags[0]["rule"] == "auditor_resignation" and flags[0]["severity"] == "hard"
     assert filing_flags("Outcome of board meeting - quarterly results") == []
+
+
+def test_flag_tuning():
+    small = structured_flags({"pledge": 2.0, "pledge_prev": 0.0})
+    assert small[0]["rule"] == "pledge_rising" and small[0]["severity"] == "soft"
+    assert structured_flags({"pledge": 11.5, "pledge_prev": 0.0})[0]["severity"] == "hard"
+    assert filing_flags("Resignation of Statutory Auditor of Material Subsidiary")[0]["severity"] == "soft"
+    assert filing_flags("Update on Corporate Insolvency Resolution Process of X, a wholly owned subsidiary")[0]["severity"] == "soft"
+    assert filing_flags("Corporate Insolvency Resolution Process")[0]["severity"] == "hard"
+    assert filing_flags("SEBI Order Granting Exemption to business trusts") == []
+    assert filing_flags("Reply to Show Cause Notice, Department of Commercial Taxes")[0]["severity"] == "soft"

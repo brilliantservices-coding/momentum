@@ -62,7 +62,8 @@ def structured_flags(m: dict) -> list[dict]:
     if g("pledge") is not None and g("pledge") > 20:
         flags.append({"rule": "pledge_above_20", "severity": "hard", "detail": f"Promoter pledge {g('pledge'):.1f}%"})
     elif g("pledge") is not None and g("pledge_prev") is not None and g("pledge") > g("pledge_prev") + 1:
-        flags.append({"rule": "pledge_rising", "severity": "hard",
+        big = g("pledge") - g("pledge_prev") >= 5 or g("pledge") > 10  # small rises from a low base are soft
+        flags.append({"rule": "pledge_rising", "severity": "hard" if big else "soft",
                       "detail": f"Pledge up from {g('pledge_prev'):.1f}% to {g('pledge'):.1f}%"})
     if g("cfo_3y") is not None and (g("profit_3y") or 0) > 0 and g("cfo_3y") <= 0.1 * g("profit_3y"):
         flags.append({"rule": "profit_without_cash", "severity": "hard",
@@ -101,10 +102,23 @@ FILING_RULES = [
 ]
 
 
+# Context that makes a hard filing match less serious (soft) or a non-event (skipped).
+SOFTEN = {"default": ["subsidiary"], "auditor_resignation": ["subsidiary"],
+          "regulatory_action": ["commercial taxes", "gst", "goods and services tax", "income tax department"]}
+SKIP = {"regulatory_action": ["granting exemption", "exemption order", "order granting"]}
+
+
 def filing_flags(text: str) -> list[dict]:
     t = (text or "").lower()
-    return [{"rule": r, "severity": sev, "detail": next(p for p in phrases if p in t)}
-            for r, sev, phrases in FILING_RULES if any(p in t for p in phrases)]
+    out = []
+    for r, sev, phrases in FILING_RULES:
+        hit = next((p for p in phrases if p in t), None)
+        if hit is None or any(x in t for x in SKIP.get(r, [])):
+            continue
+        if sev == "hard" and any(x in t for x in SOFTEN.get(r, [])):
+            sev = "soft"
+        out.append({"rule": r, "severity": sev, "detail": hit})
+    return out
 
 
 # ---- Conviction score (strategy doc: "Combining signals into a confidence score") ----

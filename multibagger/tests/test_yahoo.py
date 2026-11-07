@@ -132,7 +132,7 @@ def test_trendlyne_data_downloader_xlsx():
     assert "receivables" not in a and "cfo_3y" not in a  # annual CFO is not a 3-year sum, so it isn't mapped
     assert "revenue_annual" not in rep["recognised"] and "pledge" in rep["recognised"]
     assert {"debtor_days", "inventory_days", "avg_traded_value_cr", "pe"} <= set(rep["recognised"])
-    assert a["shares_now"] == 6.3 and "debtor_days" not in rep["missing"]
+    assert a["shares_now"] == 6.3 and "debtor_days" not in rep["missing"] and a["bse_code"] == "500001"
     assert pass1(a)["known"] >= 4
     # A title row above the header (some exports) is skipped.
     buf2 = io.BytesIO()
