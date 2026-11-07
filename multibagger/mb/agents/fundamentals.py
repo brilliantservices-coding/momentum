@@ -1,5 +1,12 @@
 """Fundamentals agent: weekly refresh of `fundamentals/` from Yahoo Finance for the NSE universe.
 
+To keep the weekly run short, each symbol gets the cheapest refresh that keeps it correct:
+- skip: last seen far outside the market-cap range (above ₹40,000 cr / below ₹200 cr) and checked
+  within the last 4 weeks;
+- light (one request: price, market cap, P/E, volume): statements are under 4 weeks old and no
+  results announcement has arrived since;
+- full (summary + annual P&L, balance sheet, cash flow, quarterly P&L): everything else.
+
 Replaces the manual Screener export (which needs a paid plan to download). A portal upload still
 works and overwrites the same records. Runs with a few threads and a time budget; symbols are
 taken oldest-refreshed first, so a run cut short continues where it stopped next time.
@@ -19,6 +26,38 @@ WORKERS = int(os.getenv("MB_YAHOO_WORKERS", "3"))
 BUDGET_MIN = float(os.getenv("MB_YAHOO_MAX_MINUTES", "150"))
 LIMIT = int(os.getenv("MB_YAHOO_LIMIT", "0"))  # 0 = whole universe; set for a quick test run
 SOURCE = "Yahoo Finance (weekly agent)"
+FAR_LOW, FAR_HIGH = 200.0, 40000.0
+STATEMENT_MAX_AGE_DAYS = 28
+RESULTS_WORDS = ("financial result", "quarterly result", "audited result", "unaudited result")
+
+
+def _days_ago(days: int) -> str:
+    from datetime import datetime, timedelta, timezone
+    return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(timespec="seconds")
+
+
+def plan(store, universe: list[str]) -> dict[str, str]:
+    """symbol -> "skip" | "light" | "full"."""
+    prev = {f["id"]: f for f in store.list("fundamentals")}
+    cutoff = _days_ago(STATEMENT_MAX_AGE_DAYS)
+    results = {}
+    for f in store.list("filings", where=[("ingested", ">=", cutoff)]):
+        text = f"{f.get('category', '')} {f.get('subject', '')}".lower()
+        if any(w in text for w in RESULTS_WORDS):
+            results[f.get("symbol")] = max(results.get(f.get("symbol"), ""), f.get("ingested") or "")
+    out = {}
+    for sym in universe:
+        p = prev.get(sym) or {}
+        mcap, checked = p.get("mcap"), p.get("as_of") or ""
+        # Records from before stmt_as_of existed: a full fetch is the one that has statement fields.
+        stmts = p.get("stmt_as_of") or (checked if "roce_3y_avg" in p and not p.get("out_of_range") else "")
+        if mcap is not None and (mcap < FAR_LOW or mcap > FAR_HIGH) and checked >= cutoff:
+            out[sym] = "skip"
+        elif stmts >= cutoff and results.get(sym, "") <= stmts:
+            out[sym] = "light"
+        else:
+            out[sym] = "full"
+    return out
 
 
 def run(store, log, fetch=yahoo.fetch) -> dict:
@@ -26,7 +65,8 @@ def run(store, log, fetch=yahoo.fetch) -> dict:
     if not universe:
         raise RuntimeError("universe is empty: run the Universe builder first")
     seen = {f["id"]: f.get("as_of", "") for f in store.list("fundamentals")}
-    symbols = sorted(universe, key=lambda s: seen.get(s, ""))
+    modes = plan(store, universe)
+    symbols = sorted((s for s in universe if modes[s] != "skip"), key=lambda s: (modes[s] != "full", seen.get(s, "")))
     if LIMIT:
         symbols = symbols[:LIMIT]
     overlays = fresh_overlays(store)  # Trendlyne/Screener fields win over Yahoo's for the stocks they cover
@@ -35,7 +75,7 @@ def run(store, log, fetch=yahoo.fetch) -> dict:
 
     def flush():
         if buf:
-            store.set_many("fundamentals", dict(buf))
+            store.set_many("fundamentals", dict(buf), merge=True)  # light refreshes keep the statement fields
             buf.clear()
 
     with ThreadPoolExecutor(max_workers=WORKERS) as pool:
@@ -46,7 +86,7 @@ def run(store, log, fetch=yahoo.fetch) -> dict:
         def submit_next():
             sym = next(it, None)
             if sym is not None:
-                futures[pool.submit(fetch, sym, MCAP_MIN, MCAP_MAX)] = sym
+                futures[pool.submit(fetch, sym, MCAP_MIN, MCAP_MAX, light=modes[sym] == "light")] = sym
 
         for _ in range(WORKERS * 2):
             submit_next()
@@ -61,8 +101,11 @@ def run(store, log, fetch=yahoo.fetch) -> dict:
                 if rec is None:
                     missing += 1
                 else:
-                    in_range += not rec.get("out_of_range")
-                    buf[sym] = {**rec, **overlays.get(sym, {}), "symbol": sym, "source": "yahoo", "as_of": now_iso()}
+                    full = not rec.get("out_of_range") and not rec.pop("light", False)
+                    in_range += full
+                    extra = {"stmt_as_of": now_iso()} if full else {}
+                    buf[sym] = {**rec, **overlays.get(sym, {}), **extra, "symbol": sym, "source": "yahoo",
+                                "as_of": now_iso()}
                 done += 1
                 if len(buf) >= 100:
                     flush()
@@ -83,6 +126,8 @@ def run(store, log, fetch=yahoo.fetch) -> dict:
     flags = forensic.run(store=store, log=log)
     log.info("yahoo: %d symbols, %d with full statements, %d not on Yahoo, %d errors",
              done, in_range, missing, len(errors))
-    return {"symbols": done, "with_statements": in_range, "not_found": missing, "errors": len(errors),
+    counts = {m: sum(1 for v in modes.values() if v == m) for m in ("full", "light", "skip")}
+    return {"symbols": done, "planned": counts, "minutes": round((time.monotonic() - start) / 60, 1),
+            "with_statements": in_range, "not_found": missing, "errors": len(errors),
             "sample_errors": dict(list(errors.items())[:5]), "complete": done == len(symbols),
             "new_red_flags": flags.get("new_alerts")}
