@@ -8,5 +8,6 @@
 {% if fresh.fund %}<p style="margin:0">Updated <strong>{{fresh.fund.imported|ist}}</strong>{% if fresh.fund_stale %} <span class="pill soft">{{ '%.0f'|format(fresh.fund_age) }} days old</span>{% endif %}</p>
 <p class="small" style="margin:4px 0 0">{{fresh.fund.rows}} companies from {{fresh.fund.file}}{% if fresh.fund.with_statements is defined %}, {{fresh.fund.with_statements}} with full financial statements (the rest are outside the ₹400-22,000 cr range){% endif %}.</p>
 {% else %}<p style="margin:0"><strong>Not loaded yet.</strong> The screener can't consider any stock until the Fundamentals agent runs (or you upload an export).</p>{% endif %}
-<p class="small" style="margin:4px 0 0">The Fundamentals agent refreshes them from Yahoo Finance every Friday at 20:00 IST, before Saturday's screen. Yahoo has no promoter pledge data; uploading a Screener.in export on the <a href="/data">Data page</a> fills that in.</p></div>
+{% if fresh.upload and fresh.fund.source == 'yahoo' %}<p class="small" style="margin:4px 0 0">On top: {{fresh.upload.rows}} companies from <strong>{{fresh.upload.file}}</strong> ({{fresh.upload.imported|ist}}), whose numbers replace Yahoo's, including pledge.</p>{% endif %}
+<p class="small" style="margin:4px 0 0">The Fundamentals agent refreshes them from Yahoo Finance every Friday at 20:00 IST, before Saturday's screen. Yahoo has no promoter pledge data; the Friday Trendlyne download (or an export uploaded on the <a href="/data">Data page</a>) fills that in for the stocks it covers.</p></div>
 </div>
