@@ -24,10 +24,19 @@ def test_weekly_run_and_signoff():
 
     from portal.app import app
     client = TestClient(app)
-    for path in ("/", "/weeks", f"/weeks/{wid}", "/book", "/runs", "/settings", "/healthz"):
+    sc = store.get("mom_screens", wid)
+    assert len(sc["rows"]) == 60 and all(len(r["f"]) == len(sc["factors"]) for r in sc["rows"])
+    f = w["funnel"]
+    assert f[0]["left"] == 60 and all(a["left"] >= b["left"] for a, b in zip(f, f[1:]))
+    assert f[-1]["left"] == len(buys)
+    assert f[len(sc["factors"])]["left"] == w["counts"]["passing"]
+    for path in ("/", "/weeks", f"/weeks/{wid}", f"/weeks/{wid}/screen", "/book", "/runs", "/settings", "/healthz"):
         r = client.get(path)
         assert r.status_code == 200, (path, r.text[:500])
     assert "Sign off ticked changes" in client.get(f"/weeks/{wid}").text
+    home = client.get("/").text
+    assert "IST" in home and "UTC" not in home and "Next scheduled run" in home
+    assert "Failed: Weekly RSI above 60" in client.get(f"/weeks/{wid}/screen").text
 
     first, second = buys[0], buys[1] if len(buys) > 1 else None
     form = {f"ok_{first['id']}": "on", f"qty_{first['id']}": "7", f"price_{first['id']}": str(first["price"] + 1),

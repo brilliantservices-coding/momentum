@@ -120,3 +120,12 @@ def test_trailing_stop_raises():
     p = strategy.propose(m, book, {"regime": "green"}, c, today=date(2026, 11, 7))
     rs = [x for x in p["changes"] if x["type"] == "raise_stop"]
     assert rs and rs[0]["new_stop"] >= close / 1.3
+
+
+def test_ist_and_next_run():
+    from datetime import datetime, timezone
+    from portal.app import ist, next_run
+    assert ist("2026-11-07T07:00:00+00:00") == "07 Nov 2026, 12:30 IST"
+    assert ist("2026-11-06") == "Fri 06 Nov 2026"
+    assert next_run(datetime(2026, 11, 7, 1, 0, tzinfo=timezone.utc)) == "Sat 07 Nov 2026, 08:00 IST"
+    assert next_run(datetime(2026, 11, 7, 3, 0, tzinfo=timezone.utc)) == "Sat 14 Nov 2026, 08:00 IST"

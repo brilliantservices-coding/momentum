@@ -1,0 +1,5 @@
+{% set top = week.funnel[0].left or 1 %}<div class="card funnel">
+{% for f in week.funnel %}<div class="frow"><div class="flabel">{{f.step}}</div>
+<div class="fbar"><i style="width:{{ (100*f.left/top) if f.left else 0 }}%"></i></div>
+<div class="fnum">{{f.left}}</div><div class="fdrop small">{% if f.dropped %}−{{f.dropped}}{% if f.key %} <a href="/weeks/{{week.week}}/screen?fail={{f.key}}">who</a>{% endif %}{% endif %}</div></div>{% endfor %}
+<p class="small" style="margin:10px 0 0">Filters are applied in this order; "−N" is how many stocks that step removed. A stock can fail several filters; the Screen page shows all of them.</p></div>

@@ -5,6 +5,8 @@ MOM_ALLOWED_USERS. Signing off updates the "Momentum" book; it never places orde
 """
 from __future__ import annotations
 
+import os
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import quote, urlparse
 
@@ -22,6 +24,43 @@ HERE = Path(__file__).parent
 app = FastAPI(title="Momentum portal", docs_url=None, redoc_url=None)
 app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
 templates = Jinja2Templates(directory=HERE / "templates")
+IST = timezone(timedelta(hours=5, minutes=30))
+SCHEDULE = os.getenv("MOM_SCHEDULE", "0 8 * * 6")  # cron, Asia/Kolkata
+
+
+def ist(value, fmt: str = "%d %b %Y, %H:%M IST") -> str:
+    """ISO timestamp (UTC or with offset) -> India time for display. Dates pass through as dates."""
+    if not value:
+        return "–"
+    try:
+        dt = datetime.fromisoformat(str(value))
+    except ValueError:
+        return str(value)
+    if len(str(value)) <= 10:
+        return dt.strftime("%a %d %b %Y")
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(IST).strftime(fmt)
+
+
+def next_run(now: datetime | None = None) -> str:
+    """Next firing of a simple 'M H * * D' schedule in IST."""
+    try:
+        minute, hour, _, _, dow = SCHEDULE.split()
+        minute, hour, dow = int(minute), int(hour), int(dow) % 7  # cron: 0 = Sunday
+    except ValueError:
+        return SCHEDULE
+    now = (now or datetime.now(timezone.utc)).astimezone(IST)
+    target_wd = (dow - 1) % 7  # Python: Monday = 0
+    for add in range(0, 8):
+        d = now + timedelta(days=add)
+        cand = d.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if d.weekday() == target_wd and cand > now:
+            return cand.strftime("%a %d %b %Y, %H:%M IST")
+    return SCHEDULE
+
+
+templates.env.filters["ist"] = ist
 
 
 def current_user(request: Request) -> str:
@@ -45,7 +84,7 @@ async def guard(request: Request, call_next):
 
 def render(request: Request, name: str, **ctx):
     ctx.update(request=request, user=current_user(request), nav=request.url.path, book_name=BOOK,
-               msg=request.query_params.get("msg", ""))
+               msg=request.query_params.get("msg", ""), next_run=next_run())
     return templates.TemplateResponse(request, name, ctx)
 
 
@@ -90,6 +129,7 @@ def overview(request: Request):
     runs = store.list("mom_runs", order_by="started", limit=1)
     return render(request, "overview.html", week=_latest_week(store), book=book, rows=rows, totals=totals,
                   last_run=runs[0] if runs else None, exposure=REGIME_EXPOSURE,
+                  fundamentals=store.get("control", "fundamentals"),
                   pending=store.list("mom_weeks", where=[("status", "==", "pending")]))
 
 
@@ -106,6 +146,15 @@ def week_detail(request: Request, wid: str):
     if not w:
         raise HTTPException(404)
     return render(request, "week.html", w={**w, "id": wid}, exposure=REGIME_EXPOSURE)
+
+
+@app.get("/weeks/{wid}/screen", response_class=HTMLResponse)
+def week_screen(request: Request, wid: str):
+    store = get_store()
+    w, sc = store.get("mom_weeks", wid), store.get("mom_screens", wid)
+    if not w:
+        raise HTTPException(404)
+    return render(request, "screen.html", w={**w, "id": wid}, screen=sc)
 
 
 @app.post("/weeks/{wid}/signoff")

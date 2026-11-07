@@ -19,30 +19,72 @@ def _f(x, nd=2):
     return None if x is None or (isinstance(x, float) and math.isnan(x)) else round(float(x), nd)
 
 
+def _i(x):
+    return None if x is None or (isinstance(x, float) and math.isnan(x)) else int(round(float(x)))
+
+
 def _excluded(cfg) -> set[str]:
     return {s.strip().upper() for s in str(cfg.get("exclude", "")).replace(";", ",").split(",") if s.strip()}
 
 
+def factor_list(cfg: dict, with_quality: bool) -> list[tuple[str, str]]:
+    """Every filter a stock must pass, in the order the funnel applies them."""
+    out = [
+        ("history", "1 year+ of price history"),
+        ("liquidity", "Turnover ≥ ₹%g cr/day" % cfg["min_turnover_cr"]),
+        ("above_150", "Price above 150 DMA"),
+        ("ma150_200", "150 DMA above 200 DMA"),
+        ("ma200_rising", "200 DMA rising for a month"),
+        ("above_50", "Price above 50 DMA"),
+        ("ma50_stack", "50 DMA above 150 and 200 DMA"),
+        ("rs_rating", "RS rating ≥ %g" % cfg["rs_rating_min"]),
+        ("near_high", "Within 25% of 52-week high"),
+        ("off_low", "30%+ above 52-week low"),
+        ("rsi_w", "Weekly RSI above 60"),
+        ("rsi_d", "Daily RSI above 50"),
+        ("rs55", "RS 55 vs Nifty above 0"),
+        ("rs123", "RS 123 vs Nifty above 0"),
+        ("not_excluded", "Not on your exclusion list"),
+    ]
+    if with_quality:
+        out.append(("quality", "Quality filter (Screener data)"))
+    return out
+
+
 def rank_universe(m: pd.DataFrame, cfg: dict, quality: dict | None = None, sectors: dict | None = None):
-    """Adds `passes`, `fail` (first failed filter) and `rank` (1 = best, among stocks that pass every
-    filter) to the metrics, and `rank_if_held`, the position used by the exit rule."""
+    """Adds one boolean column per filter (`f_<key>`), `passes`, `fail` (first failed filter),
+    `nfail`, `rank` (1 = best among stocks that pass every filter) and `rank_if_held`, the position
+    used by the exit rule."""
     m = m.copy()
     excl = _excluded(cfg)
+    c = m["close"]
     m["template"] = trend_template(m, cfg["rs_rating_min"])
-    checks = [
-        ("enough price history", m["score"].notna()),
-        ("liquidity under ₹%g cr/day" % cfg["min_turnover_cr"], m["turnover_cr"] >= cfg["min_turnover_cr"]),
-        ("trend template", m["template"]),
-        ("RS 55 or RS 123 not above 0", (m["rs55"] > 0) & (m["rs123"] > 0)),
-        ("on your exclusion list", pd.Series(~m.index.isin(list(excl)), index=m.index)),
-    ]
+    tests = {
+        "history": m["score"].notna(),
+        "liquidity": m["turnover_cr"] >= cfg["min_turnover_cr"],
+        "above_150": c > m["sma150"],
+        "ma150_200": m["sma150"] > m["sma200"],
+        "ma200_rising": m["sma200"] > m["sma200_1m"],
+        "above_50": c > m["sma50"],
+        "ma50_stack": (m["sma50"] > m["sma150"]) & (m["sma50"] > m["sma200"]),
+        "rs_rating": m["rs_rating"] >= cfg["rs_rating_min"],
+        "near_high": c >= 0.75 * m["hi52"],
+        "off_low": c >= 1.30 * m["lo52"],
+        "rsi_w": m["rsi_w"] > 60,
+        "rsi_d": m["rsi_d"] > 50,
+        "rs55": m["rs55"] > 0,
+        "rs123": m["rs123"] > 0,
+        "not_excluded": pd.Series(~m.index.isin(list(excl)), index=m.index),
+    }
     if quality:
-        q = pd.Series({s: quality.get(s, {}).get("passed") for s in m.index})
-        checks.append(("failed quality filter", q.ne(False)))
-    m["passes"], m["fail"] = True, None
-    for name, ok in checks:
-        ok = ok.astype("boolean").fillna(False).astype(bool)
-        m.loc[m["passes"] & ~ok, "fail"] = name
+        tests["quality"] = pd.Series({s: quality.get(s, {}).get("passed") for s in m.index}).ne(False)
+    factors = factor_list(cfg, bool(quality))
+    m["passes"], m["fail"], m["nfail"] = True, None, 0
+    for key, label in factors:
+        ok = pd.Series(tests[key], index=m.index).astype("boolean").fillna(False).astype(bool)
+        m[f"f_{key}"] = ok
+        m.loc[m["passes"] & ~ok, "fail"] = label
+        m["nfail"] += (~ok).astype(int)
         m["passes"] &= ok
     passing = m[m["passes"]].sort_values("score", ascending=False)
     m["rank"] = np.nan
@@ -56,7 +98,41 @@ def rank_universe(m: pd.DataFrame, cfg: dict, quality: dict | None = None, secto
     m["sector"] = [(sectors or {}).get(s, {}).get("industry", "Unknown") for s in m.index]
     if quality:
         m["quality"] = [quality.get(s, {}).get("passed") for s in m.index]
+    m.attrs["factors"] = factors
     return m
+
+
+def funnel(m: pd.DataFrame) -> list[dict]:
+    """Stocks left after each filter, applied in order, plus how many fail each filter on its own."""
+    alive = pd.Series(True, index=m.index)
+    out = [{"step": "Nifty 500 stocks with prices", "left": int(len(m))}]
+    for key, label in m.attrs["factors"]:
+        ok = m[f"f_{key}"]
+        before = int(alive.sum())
+        alive &= ok
+        out.append({"key": key, "step": label, "left": int(alive.sum()), "dropped": before - int(alive.sum()),
+                    "fail_alone": int((~ok).sum())})
+    return out
+
+
+def screen_rows(m: pd.DataFrame, setups: dict[str, str] | None = None) -> list[dict]:
+    """Compact per-stock record of every factor, for the portal's Screen page."""
+    keys = [k for k, _ in m.attrs["factors"]]
+    rows = []
+    for s, r in m.iterrows():
+        rows.append({
+            "s": s, "sec": r["sector"], "close": _f(r["close"]), "score": _f(r["score"]),
+            "rank": None if pd.isna(r["rank"]) else int(r["rank"]), "nfail": int(r["nfail"]),
+            "f": "".join("1" if r[f"f_{k}"] else "0" for k in keys),
+            "v": {"turnover_cr": _f(r["turnover_cr"], 1), "rs_rating": _i(r["rs_rating"]),
+                  "rsi_w": _i(r["rsi_w"]), "rsi_d": _i(r["rsi_d"]), "rs55": _f(100 * r["rs55"], 1),
+                  "rs123": _f(100 * r["rs123"], 1), "from_high": _f(100 * (r["close"] / r["hi52"] - 1), 1),
+                  "above_low": _f(100 * (r["close"] / r["lo52"] - 1), 1),
+                  "vs50": _f(100 * (r["close"] / r["sma50"] - 1), 1), "vs200": _f(100 * (r["close"] / r["sma200"] - 1), 1)},
+            "setup": (setups or {}).get(s),
+        })
+    rows.sort(key=lambda x: (x["rank"] is None, x["rank"] or 0, x["nfail"], -(x["score"] or -99)))
+    return rows
 
 
 def _setup(r) -> tuple[str | None, str]:
@@ -164,7 +240,7 @@ def propose(m: pd.DataFrame, book: dict, reg: dict, cfg: dict, today: date | Non
     heat = sum(max(0.0, p["qty"] * (min(px.get(s, p["entry"]), p["entry"]) - p["stop"])) for s, p in remaining.items())
     slots = cfg["max_positions"] - len(remaining)
     ranked = m[m["rank"].notna()].sort_values("rank")
-    if regime_name != "red":
+    if True:
         for sym, r in ranked.head(top_n).iterrows():
             if sym in remaining:
                 continue
@@ -173,6 +249,9 @@ def propose(m: pd.DataFrame, book: dict, reg: dict, cfg: dict, today: date | Non
             kind, why = _setup(r)
             base = {"symbol": sym, "rank": int(r["rank"]), "score": _f(r["score"]), "close": _f(r["close"]),
                     "sector": r["sector"], "rs55": _f(100 * r["rs55"], 1), "rs_rating": int(r["rs_rating"])}
+            if regime_name == "red":
+                watch.append({**base, "note": f"Red regime, no new buys ({why})", "setup_ok": bool(kind)})
+                continue
             if not kind:
                 watch.append({**base, "note": why})
                 continue
@@ -213,6 +292,17 @@ def propose(m: pd.DataFrame, book: dict, reg: dict, cfg: dict, today: date | Non
             sector_val[r["sector"]] = sector_val.get(r["sector"], 0) + qty * entry
             slots -= 1
     changes.extend(buys)
+    eligible = int(min(top_n, len(ranked)))
+    tail = [
+        {"step": f"Top {top_n} by momentum score" + (" (Red regime: no new buys)" if regime_name == "red" else
+                                                     " (Amber regime)" if regime_name == "amber" else ""),
+         "left": eligible},
+        {"step": "Valid entry this week (breakout or pullback)", "left": len(buys) + sum(
+            1 for w in watch if "no room" in w["note"] or "no free slot" in w["note"] or w.get("setup_ok"))},
+        {"step": "Proposed buys after sizing limits", "left": len(buys)},
+    ]
+    setups = {b["symbol"]: f"buy: {b['setup']}" for b in buys}
+    setups.update({w["symbol"]: f"watch: {w['note']}" for w in watch})
     for i, c in enumerate(changes):
         c["id"] = f"c{i + 1}"
     ranking = [{"rank": int(r["rank"]), "symbol": s, "score": _f(r["score"]), "close": _f(r["close"]),
@@ -225,6 +315,7 @@ def propose(m: pd.DataFrame, book: dict, reg: dict, cfg: dict, today: date | Non
                  "invested_after": _f(invested), "exposure_after_pct": _f(100 * invested / value, 1) if value else 0,
                  "heat_after_pct": _f(100 * heat / value, 2) if value else 0, "peak_value": _f(peak),
                  "drawdown_pct": _f(100 * drawdown, 1), "positions_after": len(remaining) + len(buys)},
+        "funnel_tail": tail, "setups": setups,
         "counts": {"universe": int(len(m)), "passing": int(m["passes"].sum()),
                    "template": int(m["template"].fillna(False).sum())},
     }

@@ -12,6 +12,6 @@
 </tbody></table></div>{% else %}<div class="card empty">No positions yet.</div>{% endif %}
 <h2>Trade journal</h2>
 {% if journal %}<div class="tablewrap"><table><thead><tr><th>When</th><th>Action</th><th>Stock</th><th>Qty</th><th>Price</th><th>Result</th><th>By</th></tr></thead><tbody>
-{% for j in journal %}<tr><td class="small">{{j.at[:10]}}</td><td>{{j.type|replace('_',' ')}}</td><td>{{j.symbol}}</td><td class="num">{{j.qty}}</td><td class="num">{{j.price}}{% if j.stop %}<div class="small">stop {{j.stop}}</div>{% endif %}</td><td class="num">{% if j.pnl is defined %}{{ inr(j.pnl) }} {{ pct(j.pnl_pct) }}{% endif %}</td><td class="small">{{j.by}}</td></tr>{% endfor %}
+{% for j in journal %}<tr><td class="small">{{j.at|ist}}</td><td>{{j.type|replace('_',' ')}}</td><td>{{j.symbol}}</td><td class="num">{{j.qty}}</td><td class="num">{{j.price}}{% if j.stop %}<div class="small">stop {{j.stop}}</div>{% endif %}</td><td class="num">{% if j.pnl is defined %}{{ inr(j.pnl) }} {{ pct(j.pnl_pct) }}{% endif %}</td><td class="small">{{j.by}}</td></tr>{% endfor %}
 </tbody></table></div>{% else %}<div class="card empty">No trades signed off yet.</div>{% endif %}
 {% endblock %}

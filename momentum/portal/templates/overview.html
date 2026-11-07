@@ -14,6 +14,15 @@
 <p class="small">{{week.counts.passing}} of {{week.counts.universe}} stocks pass every filter · {{week.changes|length}} proposed change(s) · data as of {{week.data_as_of}}</p>
 <a class="btn" href="/weeks/{{week.week}}">Open the week</a></div>{% else %}
 <div class="card empty">No weekly run yet. It runs every Saturday at 08:00 IST, or start one now.</div>{% endif %}
+<h2>Data freshness</h2>
+<div class="tablewrap"><table><tbody>
+<tr><th>Prices (NSE via Yahoo, automatic)</th><td>{% if week %}up to <strong>{{week.data_as_of|ist}}</strong> close · {{week.prices_count or week.counts.universe}} stocks{% else %}not downloaded yet{% endif %}</td></tr>
+<tr><th>Nifty 500 list (NSE, automatic)</th><td>{% if week and week.universe_updated %}refreshed {{week.universe_updated|ist}}{% if week.universe_count %} · {{week.universe_count}} stocks{% endif %}{% else %}–{% endif %}</td></tr>
+<tr><th>Fundamentals for the quality filter (manual upload)</th><td>{% if fundamentals %}Screener export uploaded {{fundamentals.imported|ist}} ({{fundamentals.rows}} companies) in the multibagger portal{% else %}<span class="cross">none uploaded</span>: the quality filter is skipped until you upload a Screener export on the multibagger portal's Data page{% endif %}</td></tr>
+<tr><th>Last run</th><td>{% if last_run %}{{last_run.started|ist}} <span class="pill {{last_run.status}}">{{last_run.status}}</span>{% else %}never{% endif %}</td></tr>
+<tr><th>Next scheduled run</th><td>{{next_run}} (reviews that week's Friday close)</td></tr>
+</tbody></table></div>
+{% if week and week.funnel %}<h2>This week's funnel</h2>{% include "_funnel.html" %}<p class="small"><a href="/weeks/{{week.week}}/screen">See every stock and which factors passed or failed</a></p>{% endif %}
 <h2>Run</h2><div class="card"><form method="post" action="/run"><button class="primary">Run the weekly review now</button></form>
-<span class="small">{% if last_run %}Last run {{last_run.started[:16].replace('T',' ')}} UTC: <span class="pill {{last_run.status}}">{{last_run.status}}</span> <a href="/runs">details</a>{% endif %}</span></div>
+<span class="small">{% if last_run %}Last run {{last_run.started|ist}}: <span class="pill {{last_run.status}}">{{last_run.status}}</span> <a href="/runs">details</a>{% endif %}</span></div>
 {% endblock %}
