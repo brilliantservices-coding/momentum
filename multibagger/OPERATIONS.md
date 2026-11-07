@@ -67,6 +67,14 @@ Set `BUDGET_AMOUNT` in `config.env` and deploy, or edit it in the Cloud console.
 Use the portal's **Settings** page. It takes effect on each agent's next run. Vertex needs the Claude models enabled
 once in Vertex AI Model Garden for the project.
 
+### Use OpenAI
+1. Create an API key at platform.openai.com (a project key with a monthly budget set there is safest).
+2. In Git Bash on the PC, without echoing it:
+   `read -rs T && printf '%s' "$T" | gcloud secrets create mb-openai-api-key --project=arched-tape-447611-r0 --data-file=- --labels=app=multibagger && unset T`
+   (for a new key later: `gcloud secrets versions add mb-openai-api-key ...` with the same pipe).
+3. Deploy once (`bash infra/deploy.sh`) so the jobs and portal mount it.
+4. On **Settings**, pick *OpenAI API*, a model, and its input/output price per million tokens, then Save.
+
 ### Renew the Claude subscription token
 The token from `claude setup-token` lasts about a year. When AI runs fail with an authentication error:
 1. On the PC, double-click **Claude setup-token** on the Desktop, or run

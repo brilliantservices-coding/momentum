@@ -78,21 +78,41 @@ $G artifacts repositories set-cleanup-policies mb --location="$REGION" --policy=
 say "Building image $IMAGE (Cloud Build free tier)"
 $G builds submit --region="$REGION" --tag="$IMAGE" .
 
-say "Claude subscription token (Secret Manager: mb-claude-oauth-token)"
-# Store it once, without echoing it:  claude setup-token, then
-#   printf '%s' "<token>" | gcloud secrets create mb-claude-oauth-token --data-file=- --labels=app=multibagger
-SECRET_FLAGS=(--clear-secrets)
+say "LLM secrets (Secret Manager: mb-claude-oauth-token, mb-openai-api-key)"
+# Store each once, without echoing it, e.g.:
+#   read -rs T && printf '%s' "$T" | gcloud secrets create mb-openai-api-key --data-file=- --labels=app=multibagger && unset T
+SECRETS=()
+PORTAL_SECRETS=()
+LLM_ENV=""
 if exists $G secrets describe mb-claude-oauth-token; then
   $G secrets add-iam-policy-binding mb-claude-oauth-token --member="serviceAccount:$SA_AGENTS" \
     --role=roles/secretmanager.secretAccessor >/dev/null
-  SECRET_FLAGS=(--set-secrets=CLAUDE_CODE_OAUTH_TOKEN=mb-claude-oauth-token:latest)
-  echo "found; mounted into the agent jobs"
+  SECRETS+=("CLAUDE_CODE_OAUTH_TOKEN=mb-claude-oauth-token:latest")
+  LLM_ENV="$LLM_ENV,MB_CLAUDE_TOKEN_SET=1"
+  echo "Claude token found; mounted into the agent jobs"
 else
-  echo "not found; the subscription provider stays unavailable until it is stored (Vertex still works)"
+  echo "Claude token not found; the subscription provider stays unavailable until it is stored"
 fi
+if exists $G secrets describe mb-openai-api-key; then
+  for SA in "$SA_AGENTS" "$SA_PORTAL"; do
+    $G secrets add-iam-policy-binding mb-openai-api-key --member="serviceAccount:$SA" \
+      --role=roles/secretmanager.secretAccessor >/dev/null
+  done
+  SECRETS+=("OPENAI_API_KEY=mb-openai-api-key:latest")
+  PORTAL_SECRETS+=("OPENAI_API_KEY=mb-openai-api-key:latest")  # the portal lists the account's models
+  LLM_ENV="$LLM_ENV,MB_OPENAI_KEY_SET=1"
+  echo "OpenAI key found; mounted into the agent jobs and the portal"
+else
+  echo "OpenAI key not found; the OpenAI provider stays unavailable until it is stored"
+fi
+join() { local IFS=,; echo "$*"; }
+SECRET_FLAGS=(--clear-secrets)
+[ ${#SECRETS[@]} -gt 0 ] && SECRET_FLAGS=(--set-secrets="$(join "${SECRETS[@]}")")
+PORTAL_SECRET_FLAGS=(--clear-secrets)
+[ ${#PORTAL_SECRETS[@]} -gt 0 ] && PORTAL_SECRET_FLAGS=(--set-secrets="$(join "${PORTAL_SECRETS[@]}")")
 
 DRIVE_INBOX_ID="${DRIVE_INBOX_ID:-}"
-COMMON_ENV="MB_DRIVE_INBOX_ID=$DRIVE_INBOX_ID,MB_BACKEND=gcp,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,MB_REGION=$REGION,MB_BUCKET=$BUCKET,MB_MONTHLY_BUDGET_INR=$BUDGET_AMOUNT"
+COMMON_ENV="MB_DRIVE_INBOX_ID=$DRIVE_INBOX_ID,MB_BACKEND=gcp,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,MB_REGION=$REGION,MB_BUCKET=$BUCKET,MB_MONTHLY_BUDGET_INR=$BUDGET_AMOUNT$LLM_ENV"
 
 say "Agent jobs and schedules"
 # Reads id|schedule|default_enabled from agents.yaml without needing Python locally.
@@ -123,7 +143,7 @@ done
 
 say "Portal (Cloud Run, scales to zero, Google sign-in via IAP)"
 PORTAL_FLAGS=(--region="$REGION" --image="$IMAGE" --service-account="$SA_PORTAL" --no-allow-unauthenticated
-  --min-instances=0 --max-instances=2 --cpu=1 --memory=512Mi --concurrency=40 --labels="$LABELS")
+  --min-instances=0 --max-instances=2 --cpu=1 --memory=512Mi --concurrency=40 --labels="$LABELS" "${PORTAL_SECRET_FLAGS[@]}")
 IAP_ENV="$COMMON_ENV,MB_ROLE=portal,MB_ALLOWED_USERS=${OWNER_EMAILS//,/;}"
 if $G run deploy mb-portal "${PORTAL_FLAGS[@]}" --iap --set-env-vars="$IAP_ENV" || \
    $G beta run deploy mb-portal "${PORTAL_FLAGS[@]}" --iap --set-env-vars="$IAP_ENV"; then

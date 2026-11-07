@@ -181,3 +181,72 @@ def test_portal_phase2(env, monkeypatch):
     store.set("proposals", "p2", {"symbol": "ALPHA", "action": "exit", "status": "pending", "created": "2026-11-08"})
     c.post("/approvals/p2", data={"decision": "approved"})
     assert store.get("holdings", "ALPHA") is None
+
+
+class FakeOpenAI:
+    calls = []
+
+    def __init__(self, timeout=None):
+        from types import SimpleNamespace as NS
+        outer = self
+
+        class Raw:
+            headers = {"x-ratelimit-remaining-requests": "499", "x-ratelimit-limit-requests": "500",
+                       "x-ratelimit-remaining-tokens": "199000", "x-ratelimit-limit-tokens": "200000",
+                       "content-type": "application/json"}
+
+            def parse(self):
+                return NS(status="completed", output_text='{"ok": 2}', incomplete_details=None, error=None,
+                          usage=NS(input_tokens=1_000_000, output_tokens=100_000))
+
+        def create(**kw):
+            FakeOpenAI.calls.append(kw)
+            return Raw()
+        outer.responses = NS(with_raw_response=NS(create=create))
+        outer.models = NS(list=lambda: [NS(id="gpt-test-1"), NS(id="gpt-audio-x"), NS(id="dall-e-3")])
+
+
+def test_llm_openai(env, monkeypatch):
+    import openai
+
+    from mb import llm
+    store, _ = env
+    monkeypatch.setattr(openai, "OpenAI", FakeOpenAI)
+    store.set("control", "llm", {"provider": "openai", "model": "gpt-test-1", "effort": "low", "daily_cap_usd": 5,
+                                 "openai_price_in": 2, "openai_price_out": 10})
+    with pytest.raises(llm.LLMError, match="OPENAI_API_KEY"):
+        llm.complete_json("sys", "p", store=store)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    assert llm.complete_json("sys", "hello", agent="a", store=store) == {"ok": 2}
+    kw = FakeOpenAI.calls[-1]
+    assert kw["model"] == "gpt-test-1" and kw["reasoning"] == {"effort": "low"} and kw["input"] == "hello"
+    assert llm.spend_today(store)["usd"] == 3.0  # 1M in x $2 + 0.1M out x $10
+    lim = llm.limits(store)["openai"]
+    assert lim["remaining_requests"] == "499" and lim["limit_tokens"] == "200000"
+    assert llm.month_usage(store)["openai"] == {"usd": 3.0, "calls": 1}
+    llm._models_cache.clear()
+    assert llm.openai_models() == ["gpt-test-1"]
+    assert llm.valid_model("openai", "gpt-6.1-sol") and not llm.valid_model("openai", "bad model!")
+    assert not llm.valid_model("vertex", "gpt-5.5")
+
+
+def test_portal_settings_openai(env, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from portal.app import app
+    store, _ = env
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    c = TestClient(app)
+    page = c.get("/settings").text
+    assert "OpenAI API" in page and "key missing" in page and "left" in page
+    r = c.post("/settings", data={"provider": "openai", "openai_model": "gpt-5.5", "openai_model_custom": "gpt-7-new",
+                                  "effort": "medium", "daily_cap_usd": "3", "openai_price_in": "1.5",
+                                  "openai_price_out": "12"}, follow_redirects=False)
+    cfg = store.get("control", "llm")
+    assert r.status_code == 303 and cfg["provider"] == "openai" and cfg["model"] == "gpt-7-new"
+    assert cfg["openai_price_out"] == 12
+    assert c.post("/settings", data={"provider": "vertex", "model": "gpt-5.5", "effort": "low",
+                                     "daily_cap_usd": "2"}).status_code == 400
+    store.set("control", "llm_limits", {"openai": {"remaining_requests": "42", "limit_requests": "500",
+                                                   "at": "2026-11-07T10:00:00+00:00", "model": "gpt-7-new"}})
+    assert "42 of 500" in c.get("/settings").text
