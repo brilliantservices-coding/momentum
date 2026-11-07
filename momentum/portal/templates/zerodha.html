@@ -1,0 +1,32 @@
+{% extends "base.html" %}{% from "_macros.html" import inr %}{% block body %}
+<h1>Zerodha connection</h1>
+<p class="sub">Every call to Zerodha goes through the Mumbai VM (static IP 34.93.168.72). Kite sessions expire every morning at 06:00 IST, so connect once per day before using it.</p>
+{% if not configured %}<div class="card empty">The Zerodha connection is not set up yet.</div>{% else %}
+{% if error %}<div class="banner bad">{{error}}</div>{% endif %}
+<h2>1. Connect for today</h2>
+<div class="card"><p style="margin-top:0">{% if status and status.connected %}<span class="pill succeeded">connected</span> as <strong>{{status.user_id}}</strong> since {{status.since|ist}}{% else %}<span class="pill">not connected today</span>{% endif %}</p>
+<a class="btn" href="/zerodha/login">{{ 'Reconnect' if status and status.connected else 'Connect Zerodha' }}</a>
+<span class="small">Opens Zerodha's own login page; you sign in there and come straight back.</span></div>
+
+<h2>2. Connection check (read-only)</h2>
+<div class="card"><form method="post" action="/zerodha/check"><button class="primary">Run the check</button></form>
+<span class="small">Reads your profile, funds and holdings. Places nothing.</span>
+{% if last.check %}{% set c = last.check %}<div class="tablewrap" style="margin-top:12px"><table><tbody>
+<tr><th>Checked</th><td>{{last.check_at|ist}}</td></tr>
+<tr><th>Account</th><td>{{c.user_name}} ({{c.user_id}})</td></tr>
+<tr><th>Calls left from</th><td>{{c.egress_ip or 'unknown'}} {% if c.egress_ip == '34.93.168.72' %}<span class="tick">✓ whitelisted static IP</span>{% endif %}</td></tr>
+<tr><th>Cash available (equity)</th><td>{{ inr(c.cash_available) }}</td></tr>
+<tr><th>Holdings in the account</th><td>{{c.holdings_count}}</td></tr></tbody></table></div>{% endif %}</div>
+
+<h2>3. Test order (places and cancels one order)</h2>
+<div class="card"><p style="margin-top:0">Places <strong>1 unit of LIQUIDBEES</strong> as a limit BUY at 3% below its last price{% if ref_price %} (about ₹{{ "%.2f"|format(ref_price*0.97) }}){% endif %}, which cannot fill, tagged "Momentum". It then cancels it straight away and shows what Kite recorded. Outside market hours it goes in as an after-market order and is cancelled the same way. You'll see it in Kite's order book as cancelled.</p>
+<form method="post" action="/zerodha/test-order" class="row"><label class="small"><input type="checkbox" name="confirm"> I understand this places a real order on my account, which is cancelled at once</label>
+<button class="danger">Place and cancel test order</button></form>
+{% if last.test %}{% set t = last.test %}<div class="tablewrap" style="margin-top:12px"><table><tbody>
+<tr><th>Ran</th><td>{{last.test_at|ist}}</td></tr>
+<tr><th>Order</th><td>{{t.order_id}} · {{t.variety}} · limit ₹{{t.price}}</td></tr>
+<tr><th>Final status</th><td><span class="pill {{ 'succeeded' if t.final_status=='CANCELLED' else 'failed' if t.filled else '' }}">{{t.final_status}}</span>{% if t.filled %} <strong class="cross">It filled: you now hold 1 LIQUIDBEES; sell it in Kite or leave it as parked cash.</strong>{% endif %}</td></tr>
+<tr><th>Kite's history</th><td class="small">{% for h in t.history %}{{h.status}}{% if h.message %} ({{h.message}}){% endif %}{{ " → " if not loop.last }}{% endfor %}</td></tr>
+</tbody></table></div>{% endif %}</div>
+{% endif %}
+{% endblock %}

@@ -156,6 +156,9 @@ def propose(m: pd.DataFrame, book: dict, reg: dict, cfg: dict, today: date | Non
     all_pos: dict = book.get("positions", {})
     positions = {s: p for s, p in all_pos.items() if s != LIQUID}
     liq_qty = int(all_pos.get(LIQUID, {}).get("qty", 0))
+    # No fresh LIQUIDBEES quote: fall back to the book's entry price, then to ~₹1,000 (its usual
+    # level), and say so in the summary so the quantity is checked before sign-off
+    price_estimated = not liquid_price
     liquid_price = float(liquid_price or all_pos.get(LIQUID, {}).get("entry") or 1000.0)
     # Money in LIQUIDBEES counts as spendable: it is sold to fund buys and topped up with what's left
     cash = float(book.get("cash", 0)) + liq_qty * liquid_price
@@ -299,7 +302,8 @@ def propose(m: pd.DataFrame, book: dict, reg: dict, cfg: dict, today: date | Non
     changes.extend(buys)
 
     # Park whatever is not needed in LIQUIDBEES (sell units first when buys need the money)
-    liquid = {"symbol": LIQUID, "price": _f(liquid_price), "qty_now": liq_qty, "qty_after": liq_qty}
+    liquid = {"symbol": LIQUID, "price": _f(liquid_price), "qty_now": liq_qty, "qty_after": liq_qty,
+              "price_estimated": price_estimated}
     if int(cfg.get("park_in_liquid", 1)):
         buffer = cfg.get("cash_buffer_pct", 1.0) / 100 * value
         target = int(max(0.0, cash - buffer) // liquid_price)
@@ -434,5 +438,8 @@ def summarize(p: dict, cfg: dict) -> list[dict]:
         text = f"{liq['qty_after']} units of {liq['symbol']} ({_inr(liq['value_after'])}) stay parked; no change needed."
     else:
         text = "Idle cash stays as cash (parking in LIQUIDBEES is off in Settings)."
+    if park and liq.get("price_estimated"):
+        text += (f" No current {liq['symbol']} price was available this week, so ₹{liq['price']:,.2f} is an estimate: "
+                 "check the price in Kite and adjust the quantity before signing off.")
     out.append({"title": "Idle cash", "text": text + f" Plain cash after this week: {_inr(p['book']['cash_after'])}."})
     return out

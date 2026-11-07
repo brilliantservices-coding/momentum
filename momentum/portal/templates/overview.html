@@ -26,5 +26,6 @@
 </tbody></table></div>
 {% if week and week.funnel %}<h2>This week's funnel</h2>{% include "_funnel.html" %}<p class="small"><a href="/weeks/{{week.week}}/screen">See every stock and which factors passed or failed</a></p>{% endif %}
 <h2>Run</h2><div class="card"><form method="post" action="/run"><button class="primary">Run the weekly review now</button></form>
+<p class="small">This recomputes a week that is still pending. A week you have signed off is never rebuilt from here.</p>
 <span class="small">{% if last_run %}Last run {{last_run.started|ist}}: <span class="pill {{last_run.status}}">{{last_run.status}}</span> <a href="/runs">details</a>{% endif %}</span></div>
 {% endblock %}

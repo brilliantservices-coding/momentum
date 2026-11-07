@@ -26,7 +26,7 @@
 <td data-label="Why"><ul class="reasons">{% for r in c.reasons %}<li>{{r}}</li>{% endfor %}</ul></td></tr>{% endfor %}
 </tbody></table></div>
 {% if w.status=='pending' %}
-<div class="card" style="margin-top:12px"><p class="small" style="margin-top:0">Untick anything you don't want. Edit quantity and price to your actual fills before signing off; the {{book_name}} book is updated with exactly what you sign. Then place the orders yourself in Kite with the tag "{{book_name}}" and set stops as GTT orders.</p>
+<div class="card" style="margin-top:12px"><p class="small" style="margin-top:0">Untick anything you don't want. Edit quantity and price to your actual fills before signing off; the {{book_name}} book is updated with exactly what you sign. Then place the orders yourself in Kite and set stops as GTT orders. Kite web and app orders cannot carry a tag, so the book here is what keeps these trades apart from your other holdings.</p>
 <div class="row"><input type="text" name="note" placeholder="Note for the journal (optional)" style="flex:1;min-width:220px">
 <button class="primary" name="action" value="signoff">Sign off ticked changes</button>
 <button class="danger" name="action" value="reject_all">Reject all</button></div></div>
