@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from .. import inputs, llm
-from ..rules import TIERS
+from ..rules import tier_for
 from ..store import now_iso
 from ._context import GROUND_RULES, company_record, compact, per_run
 
@@ -59,7 +59,7 @@ def run(store, log) -> dict:
             break
         adj = max(-15.0, min(0.0, float(out.get("score_adjustment") or 0)))
         new = 0.0 if out.get("verdict") == "reject" else max(0.0, round(float(s.get("score") or 0) + adj, 1))
-        tier = next((t for cut, t in TIERS if new >= cut), "Reject")
+        tier = "Reject" if out.get("verdict") == "reject" else tier_for(new, len(s.get("unverified") or []))
         stamp = now_iso()
         store.set("redteam", sym, {"symbol": sym, **out, "score_before": s.get("score"), "score_after": new,
                                    "written": stamp, "inputs_hash": key})

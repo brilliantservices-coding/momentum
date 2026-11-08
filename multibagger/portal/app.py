@@ -126,7 +126,7 @@ def _funnel():
     held = {h["id"] for h in store.list("holdings")}
     stage_names = ["Screened (fundamentals loaded)", "Market cap and liquidity gates", "Enough data (4+ rules known)",
                    "Pass 1 rules met (70%+ of known)", "No open hard red flag: watchlist", "Analysed by the AI analyst",
-                   "Conviction 50+ (tier A, B or C)", "Cleared the red team", "Proposed for purchase",
+                   "Conviction 52+ (tier A, B or C)", "Cleared the red team", "Proposed for purchase",
                    "Approved by you / held"]
     rows = []
     for c in cands:
@@ -148,7 +148,7 @@ def _funnel():
         elif reached < 5:
             why = "; ".join(pass1_reasons(c)) or "did not pass"
         else:
-            why = ["not analysed yet (the analyst takes the strongest screens first, a set number per run)", f"score {s and s.get('score')} below 50",
+            why = ["not analysed yet (the analyst takes the strongest screens first, a set number per run)", f"score {s and s.get('score')} below 52",
                    "waiting for the red team", "no ticket yet (portfolio agent)", "ticket awaiting your decision"][reached - 5]
         rows.append({**c, "reached": reached, "stage": stage_names[reached - 1], "why": why,
                      "score": s and s.get("score"), "tier": s and s.get("tier")})

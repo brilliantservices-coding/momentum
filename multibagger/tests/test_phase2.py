@@ -15,12 +15,20 @@ def test_conviction_rules():
             "governance": 10}
     assert conviction(full) == {**conviction(full), "score": 100.0, "tier": "A"}  # 100 + 5 bonus, capped
     assert conviction({**full, "financial": 99})["families"]["financial"] == 20  # clipped to weight
-    two_strong = {"theme": 15, "financial": 20, "management": 13, "visibility": 10, "ecosystem": 7, "valuation": 7}
+    two_strong = {"theme": 15, "financial": 20, "management": 8, "visibility": 6, "ecosystem": 4, "valuation": 5,
+                  "governance": 5}
     r = conviction(two_strong)
     assert r["strong_families"] == 2 and r["score"] == 60 and r["tier"] == "C"
     assert conviction(full, hard_flags=1)["score"] == 0
     assert conviction(full, soft_flags=3)["tier"] == "Reject"
     assert conviction({"financial": 16, "management": 15, "visibility": 12, "governance": 9, "theme": 13})["tier"] == "B"
+    # Revised rules (8 Nov): unverified = half weight, never strong; 2+ unverified cap the tier at C.
+    r = conviction({**full, "management": 0, "visibility": 0}, unverified=["management", "visibility"])
+    assert r["families"]["management"] == 10 and r["families"]["visibility"] == 7.5
+    assert r["strong_families"] == 5 and r["score"] == 87.5 and r["tier"] == "C"
+    r = conviction({**full, "ecosystem": 2}, unverified=["management"])
+    assert r["score"] == 87.0 and r["tier"] == "A"
+    assert conviction(full, soft_flags=2)["score"] == 94.0  # 100 capped, then -3 per soft flag
 
 
 class FakeCLI:

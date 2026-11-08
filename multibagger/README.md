@@ -70,8 +70,10 @@ Agents 6-10 shipped **paused**; run each once from the portal, check its output,
   resignation, SEBI orders, defaults and so on. Hard flags block a company until you dismiss the alert.
 - **Conviction score** (`rules.conviction`): the analyst model proposes points per family with evidence;
   the code clips them to the weights (theme 15, financial 20, management 20, visibility 15, ecosystem 10,
-  valuation 10, governance 10), adds +5 when 5+ families are strong, caps at 60 when fewer than 3 are,
-  zeroes on a hard flag or 3+ soft flags, and maps to tiers A ≥80, B 65-79, C 50-64.
+  valuation 10, governance 10). A family with no usable evidence is marked unverified and gets half its
+  weight. Strong means 60%+ of weight and verified: +5 when 5+ families are strong, capped at 60 when fewer
+  than 3 are. Each soft flag costs 3 points, 3+ soft flags or a hard flag zero the score. Tiers: A ≥75,
+  B 62-74, C 52-61, and 2+ unverified families cap the tier at C (revised 8 Nov 2026).
 - **Sizing** (`rules.SIZING`): starter / max % of portfolio at cost, A 4/8, B 2.5/5, C 1/2, at most 25 names.
 
 ### AI layer (`mb/llm.py`)
