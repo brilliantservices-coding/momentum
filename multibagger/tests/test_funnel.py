@@ -74,3 +74,21 @@ def test_stale_running_runs_show_stopped(env):
     page = c.get("/agents/universe").text
     assert "stopped" in page and ">running<" not in page
     assert "stopped" in c.get("/").text
+
+
+def test_data_page_imports_from_bucket(env, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from mb import control
+    from portal.app import app
+    store, blob = env
+    started = []
+    monkeypatch.setattr(control, "run_now", lambda a: started.append(a) or "ok")
+    c = TestClient(app)
+    assert "Nothing waiting in the bucket" in c.get("/data").text
+    assert "No files waiting" in c.post("/data/fundamentals/import-inbox").text
+    blob.put("inbox/fundamentals/trendlyne-screen-20261108.xlsx", b"x")
+    page = c.get("/data").text
+    assert "trendlyne-screen-20261108.xlsx" in page and "Import latest from bucket now" in page
+    r = c.post("/data/fundamentals/import-inbox")
+    assert started == ["screener"] and "Importing 1 file" in r.text

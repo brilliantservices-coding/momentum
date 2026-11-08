@@ -1,7 +1,15 @@
 {% extends "base.html" %}{% block body %}
 <h1>Data</h1><p class="sub">Inputs the agents need that can't be fetched automatically within the sources' terms of use.</p>
 {% include "_freshness.html" %}
-<div class="card"><h3 style="margin:0 0 6px;font-size:15px">Fundamentals export</h3>
+<div class="card"><h3 style="margin:0 0 6px;font-size:15px">From the bucket (Friday Trendlyne download)</h3>
+<p class="small" style="margin-top:0">The weekly desktop task drops the Trendlyne file in the bucket; Saturday's 07:00 screener imports it automatically. The button runs that import (and the re-screen) now instead.</p>
+{% if fund_inbox %}<p class="small">Waiting: {% for f in fund_inbox %}<strong>{{f.rsplit('/',1)[-1]}}</strong>{{', ' if not loop.last}}{% endfor %}</p>
+<form method="post" action="/data/fundamentals/import-inbox"><button class="primary">Import latest from bucket now</button></form>
+{% else %}<p class="small">Nothing waiting in the bucket.</p>{% endif %}
+{% if fund_processed %}<p class="small">Already imported: {% for f in fund_processed %}{{f.rsplit('/',1)[-1]}}{{', ' if not loop.last}}{% endfor %}</p>{% endif %}
+{% if upload %}<p class="small">Last Trendlyne/export import: <strong>{{upload.file}}</strong>, {{upload.rows}} companies, {{upload.imported|ist}}.<br>
+Recognised: {{(upload.recognised or [])|join(', ')}}<br>Missing: {{(upload.missing or [])|join(', ')}}</p>{% endif %}</div>
+<div class="card"><h3 style="margin:0 0 6px;font-size:15px">Fundamentals export (manual upload)</h3>
 <p class="small" style="margin-top:0">Upload a CSV or XLSX export from a Screener.in screen (or similar). Include as many of these columns as you can: NSE Code, Name, Current Price, Market Capitalization, Price to Earning, Sales growth 3Years, Profit growth 3Years, YOY Quarterly sales growth, Return on capital employed, Operating cash flow 3Years, EBITDA 3Years, Net profit 3Years, EBITDA, Debt, Cash Equivalents, Debt to equity, Number of equity shares, Number of equity shares 3Years back, Promoter holding, Change in promoter holding, Pledged percentage, Debtor days, Debtor days 3Years back, Contingent liabilities, Net worth, Capital work in progress, Volume 1month average.</p>
 <form method="post" action="/data/fundamentals" enctype="multipart/form-data" class="row"><input type="file" name="file" accept=".csv,.xlsx,.xls" required> <button class="primary">Upload and import</button></form>
 {% if fundamentals %}<p class="small">Last import: <strong>{{fundamentals.file}}</strong>, {{fundamentals.rows}} companies, {{fundamentals.imported|ist}}.<br>
