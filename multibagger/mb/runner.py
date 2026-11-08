@@ -55,6 +55,10 @@ def run(agent_id: str, force: bool = False) -> dict:
     log.addHandler(logging.StreamHandler(sys.stdout))
 
     started, t0 = now_iso(), time.monotonic()
+    # Agents stop 10 minutes before the job timeout and leave the rest to a follow-up run.
+    os.environ["MB_RUN_DEADLINE"] = str(time.time() + int(agent.get("timeout") or 3600) - 600)
+    if os.getenv("MB_REDO") == "1" and not os.getenv("MB_REDO_SINCE"):
+        os.environ["MB_REDO_SINCE"] = started  # follow-up runs redo only what this redo hasn't reached
     store.set("runs", run_id, {"agent": agent_id, "status": "running", "started": started})
     store.set("agents", agent_id, {"last_run_id": run_id, "last_status": "running", "last_started": started}, merge=True)
     status, summary = "succeeded", {}
@@ -65,6 +69,9 @@ def run(agent_id: str, force: bool = False) -> dict:
         status = "failed"
         summary = {"error": f"{type(exc).__name__}: {exc}"}
         log.error(traceback.format_exc())
+    if status == "succeeded" and summary.get("more_to_do"):
+        summary["next_run"] = _continue(store, agent_id, run_id)
+        log.info("next run: %s", summary["next_run"])
     finished = now_iso()
     duration = round(time.monotonic() - t0, 1)
     store.set("runs", run_id, {"agent": agent_id, "status": status, "started": started, "finished": finished,
@@ -73,6 +80,30 @@ def run(agent_id: str, force: bool = False) -> dict:
     if status == "failed":
         raise SystemExit(1)
     return {"status": status, "run_id": run_id, "summary": summary}
+
+
+CHAIN_MAX = int(os.getenv("MB_CHAIN_MAX", "30"))
+
+
+def _continue(store, agent_id: str, run_id: str) -> str:
+    """Starts the next run straight away when eligible stocks are left (at most CHAIN_MAX in a row).
+    The kill switch, a Stop or the daily cap ends the chain; scheduled runs pick up from there."""
+    depth = int(os.getenv("MB_CHAIN") or 0) + 1
+    if depth > CHAIN_MAX:
+        return f"not started: {CHAIN_MAX} runs in a row (the next scheduled run continues)"
+    if (store.get("control", "global") or {}).get("killed"):
+        return "not started: kill switch is on"
+    if ((store.get("runs", run_id) or {}).get("status")) == "cancelled":
+        return "not started: this run was stopped"
+    from . import control
+    env = {"MB_CHAIN": str(depth)}
+    if os.getenv("MB_REDO_SINCE"):
+        env["MB_REDO_SINCE"] = os.environ["MB_REDO_SINCE"]
+    try:
+        control.run_now(agent_id, exclude=run_id, env=env)
+    except Exception as exc:
+        return f"not started: {type(exc).__name__}: {str(exc)[:200]}"
+    return f"started (run {depth} of the chain)"
 
 
 if __name__ == "__main__":

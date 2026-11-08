@@ -52,15 +52,16 @@ def active_runs(agent_id: str, exclude: str | None = None) -> list[str]:
             if r["id"] != exclude and not is_stale(r.get("started"), timeout)]
 
 
-def run_now(agent_id: str, redo: bool = False) -> str:
-    """Starts an execution that ignores the paused flag (an explicit human request).
+def run_now(agent_id: str, redo: bool = False, exclude: str | None = None, env: dict | None = None) -> str:
+    """Starts an execution that ignores the paused flag (an explicit human request, or the follow-up
+    run an agent starts for itself when stocks are left).
 
-    Refuses (AlreadyRunning) while an earlier run is in progress. redo=True makes the research agents
-    ignore their saved results once and redo every stock (MB_REDO=1).
+    Refuses (AlreadyRunning) while an earlier run is in progress (other than `exclude`, the caller's own
+    run). redo=True makes the research agents ignore their saved results once and redo every stock.
     """
-    if active_runs(agent_id):
+    if active_runs(agent_id, exclude=exclude):
         raise AlreadyRunning(f"{agent_id} is already running")
-    extra = {"MB_FORCE": "1", **({"MB_REDO": "1"} if redo else {})}
+    extra = {"MB_FORCE": "1", **({"MB_REDO": "1"} if redo else {}), **(env or {})}
     if settings.backend != "gcp":
         proc = subprocess.Popen([sys.executable, "-m", "mb.runner", agent_id, "--force"], cwd=ROOT,
                                 env={**os.environ, **extra}, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

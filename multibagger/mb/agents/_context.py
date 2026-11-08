@@ -50,7 +50,16 @@ def strength(c: dict) -> tuple:
     return (-met, known - met, c.get("id") or "")
 
 
-def per_run(store, agent: str, default: int = 10) -> int:
+def eligible(store) -> list[dict]:
+    """Watchlist stocks worth the research agents' time: passed the screen and met at least the Settings
+    "minimum Pass 1 rules met" (default 5 of 7), strongest first."""
+    from .. import llm
+    need = int(llm.get_settings(store).get("min_rules_met") or 5)
+    return sorted((c for c in store.list("candidates", where=[("passed", "==", True)]) if (c.get("met") or 0) >= need),
+                  key=strength)
+
+
+def per_run(store, agent: str, default: int = 50) -> int:
     """Stocks an agent handles per run: the Settings page value; MB_<AGENT>_MAX on the job overrides it."""
     from .. import llm
     return int(os.getenv(f"MB_{agent.upper()}_MAX") or llm.get_settings(store).get(f"{agent}_per_run") or default)

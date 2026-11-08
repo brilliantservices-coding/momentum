@@ -65,6 +65,9 @@ for sa in "$SA_AGENTS" "$SA_PORTAL"; do
 done
 $G iam service-accounts add-iam-policy-binding "$SA_AGENTS" --member="serviceAccount:$SA_PORTAL" \
   --role=roles/iam.serviceAccountUser >/dev/null
+# The research agents start their own follow-up run when stocks are left (job-level grant below).
+$G iam service-accounts add-iam-policy-binding "$SA_AGENTS" --member="serviceAccount:$SA_AGENTS" \
+  --role=roles/iam.serviceAccountUser >/dev/null
 
 say "Container registry (keeps only the 3 newest images, to stay inside the 0.5 GB free tier)"
 exists $G artifacts repositories describe mb --location="$REGION" || \
@@ -125,6 +128,10 @@ while IFS='|' read -r AGENT CRON DEFAULT_ON TIMEOUT; do
   $G run jobs deploy "mb-$AGENT" --region="$REGION" --image="$IMAGE" \
     --command=python --args="-m,mb.runner,$AGENT" --service-account="$SA_AGENTS" \
     --set-env-vars="$COMMON_ENV" "${SECRET_FLAGS[@]}" --cpu=1 --memory=1Gi --max-retries=0 --task-timeout="$TIMEOUT" --tasks=1 --labels="$LABELS" >/dev/null
+  case "$AGENT" in extraction|analyst|redteam)
+    $G run jobs add-iam-policy-binding "mb-$AGENT" --region="$REGION" --member="serviceAccount:$SA_AGENTS" \
+      --role=roles/run.developer >/dev/null ;;  # only this job: start its own next run
+  esac
   URI="https://run.googleapis.com/v2/projects/$PROJECT_ID/locations/$REGION/jobs/mb-$AGENT:run"
   if exists $G scheduler jobs describe "mb-$AGENT-schedule" --location="$REGION"; then
     $G scheduler jobs update http "mb-$AGENT-schedule" --location="$REGION" --schedule="$CRON" \

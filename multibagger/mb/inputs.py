@@ -20,7 +20,23 @@ PRICE_MOVE = float(os.getenv("MB_REANALYSE_PRICE_MOVE", "0.15"))
 
 
 def redo() -> bool:
+    return os.getenv("MB_REDO") == "1" or bool(os.getenv("MB_REDO_SINCE"))
+
+
+def redo_due(last_done: str | None) -> bool:
+    """With "redo all", a stock is due when its saved result is older than the start of the redo.
+    The chained follow-up runs carry MB_REDO_SINCE, so each stock is redone once, not once per run."""
+    since = os.getenv("MB_REDO_SINCE")
+    if since:
+        return (last_done or "") < since
     return os.getenv("MB_REDO") == "1"
+
+
+def out_of_time() -> bool:
+    """True once the run is near its job timeout (MB_RUN_DEADLINE, set by the runner): save and hand over."""
+    import time
+    deadline = os.getenv("MB_RUN_DEADLINE")
+    return bool(deadline) and time.time() > float(deadline)
 
 
 def _clean(obj, drop):
