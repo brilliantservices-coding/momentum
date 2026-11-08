@@ -7,7 +7,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 MB_BACKEND=gcp DISABLE_AUTOUPDA
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
 COPY --from=node /usr/local/bin/node /usr/local/bin/node
 COPY --from=node /usr/local/lib/node_modules /usr/local/lib/node_modules
-RUN ln -s /usr/local/lib/node_modules/@anthropic-ai/claude-code/cli.js /usr/local/bin/claude
+# The package ships a native binary (bin/claude.exe, put in place by its postinstall); there is no cli.js.
+RUN ln -s /usr/local/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe /usr/local/bin/claude \
+    && claude --version
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
