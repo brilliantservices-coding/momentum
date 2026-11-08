@@ -117,7 +117,14 @@ it on the Data page. Duplicates are skipped. The Data page shows the latest fili
 - Extraction marks each filing extracted, so it never reads one twice.
 - **Best-qualified first.** The analyst and extraction take the watchlist stocks that met the most Pass 1
   rules first; the red team takes falling holdings, then the highest scores. How many stocks each takes per
-  run is on the Settings page (Stocks per run, default 10). `MB_<AGENT>_MAX` on a job overrides it.
+  run is on the Settings page (Stocks per run, default 50). `MB_<AGENT>_MAX` on a job overrides it.
+- **Minimum rules.** The analyst and extraction only take stocks that met at least 5 of the 7 Pass 1 rules
+  (Settings, "Minimum Pass 1 rules met").
+- **Run chains.** When eligible stocks are left, the analyst, extraction and red team start their next run
+  themselves (summary `next_run`), until all are done or 30 runs in a row (`MB_CHAIN_MAX`). A run stops 10
+  minutes before its 3 h timeout and hands over. The daily cap, the kill switch or Stop ends a chain;
+  the next Run now or scheduled run picks up from the saved results. "Redo all" redoes each stock once
+  across the whole chain (`MB_REDO_SINCE`).
 - To redo everything once anyway, use **Run now, redo all** on the agent page (sets `MB_REDO=1`).
 
 ## Running things by hand

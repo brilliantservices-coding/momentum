@@ -47,6 +47,7 @@ agents:
     schedule: "0 21 * * 1,4"       # Mon and Thu 21:00, after ingestion
     cadence: twice weekly
     phase: 2
+    timeout: 10800                 # 3 h; a run stops 10 min early and the next run continues
     default_enabled: false
   - id: analyst
     name: Company analyst
@@ -54,6 +55,7 @@ agents:
     schedule: "0 9 * * 6"          # Saturdays 09:00, after the screener
     cadence: weekly
     phase: 2
+    timeout: 10800                 # 3 h; a run stops 10 min early and the next run continues
     default_enabled: false
   - id: redteam
     name: Red-team agent
@@ -61,6 +63,7 @@ agents:
     schedule: "0 11 * * 6"         # Saturdays 11:00
     cadence: weekly
     phase: 2
+    timeout: 10800                 # 3 h; a run stops 10 min early and the next run continues
     default_enabled: false
   - id: portfolio
     name: Portfolio agent

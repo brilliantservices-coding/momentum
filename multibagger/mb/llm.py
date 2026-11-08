@@ -25,8 +25,8 @@ from .store import get_store, now_iso
 
 DEFAULTS = {"provider": "subscription", "model": "claude-opus-5-5", "effort": "medium",
             "daily_cap_usd": settings.daily_llm_cap_usd, "vertex_region": "global",
-            "openai_price_in": 2.5, "openai_price_out": 15.0, "analyst_per_run": 10,
-            "extraction_per_run": 10, "redteam_per_run": 10}
+            "openai_price_in": 2.5, "openai_price_out": 15.0, "analyst_per_run": 50,
+            "extraction_per_run": 50, "redteam_per_run": 50, "min_rules_met": 5}
 MODELS = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]
 # USD per million tokens (input, output), first-party list prices used as an estimate.
 PRICES = {"claude-opus-5-5": (4.0, 20.0), "claude-sonnet-5-5": (2.0, 10.0), "claude-haiku-5-5": (0.10, 0.50)}

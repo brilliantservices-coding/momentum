@@ -30,16 +30,19 @@ def run(store, log) -> dict:
     # Falling holdings first (risk to money already in), then the highest scores.
     todo.sort(key=lambda s: (s["id"] not in held, -(s.get("score") or 0)))
     limit, reviewed = per_run(store, "redteam"), 0
-    done, unchanged = {}, 0
+    done, unchanged, stopped = {}, 0, None
     for s in todo:
         if reviewed >= limit:
+            break
+        if inputs.out_of_time():
+            stopped = "time"
             break
         sym = s["id"]
         memo = store.get("memos", sym) or {}
         rec = company_record(store, sym)
         key = inputs.digest(memo, rec, s.get("analysed"), PROMPT)
         prev = store.get("redteam", sym) or {}
-        if prev.get("inputs_hash") == key and not inputs.redo():
+        if prev.get("inputs_hash") == key and not inputs.redo_due(prev.get("written")):
             # Same memo and evidence as last review: keep that verdict instead of asking again.
             if s.get("redteam_needed"):
                 store.set("scores", sym, {"redteam_needed": False}, merge=True)
@@ -51,6 +54,7 @@ def run(store, log) -> dict:
                                     memo=compact(memo, 30000), record=compact(rec)),
                                     agent="redteam", store=store)
         except llm.BudgetExceeded as exc:
+            stopped = "daily cap"
             log.warning("%s", exc)
             break
         adj = max(-15.0, min(0.0, float(out.get("score_adjustment") or 0)))
@@ -64,4 +68,5 @@ def run(store, log) -> dict:
         done[sym] = f"{s.get('score')} -> {new} ({tier})"
         log.info("%s: %s", sym, done[sym])
     return {"reviewed": len(done), "changes": done, "unchanged_skipped": unchanged,
-            "still_to_do": max(0, len(todo) - unchanged - reviewed)}
+            "still_to_do": max(0, len(todo) - unchanged - reviewed), "stopped_by": stopped,
+            "more_to_do": bool(done and len(todo) - unchanged - reviewed > 0 and stopped != "daily cap")}

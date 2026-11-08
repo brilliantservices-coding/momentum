@@ -110,7 +110,8 @@ def test_research_pipeline(env, cli):
                             "statement": "Statutory auditor resigned"}]}])
     fid = store.list("filings", where=[("symbol", "==", "ALPHA")])[0]["id"]
     fake.replies[0]["facts"][1]["filing_id"] = fid
-    assert extraction.run(store=store, log=LOG) == {"filings": 1, "facts": 1}
+    out = extraction.run(store=store, log=LOG)
+    assert (out["filings"], out["facts"], out["more_to_do"]) == (1, 1, False)
     assert extraction.run(store=store, log=LOG)["filings"] == 0  # marked extracted
 
     cli([{"archetype": "Small leader in a large, growing market", "summary": "s", "families": FAMILIES,
@@ -330,3 +331,36 @@ def test_agents_take_best_qualified_first(env, cli):
     cli([{"bear_case": "b", "score_adjustment": 0, "verdict": "hold score"}])
     out = redteam.run(store=store, log=LOG)
     assert list(out["changes"]) == ["MID"] and out["still_to_do"] == 1
+
+
+def test_min_rules_and_run_chain(env, cli, monkeypatch):
+    from mb import control, runner
+    from mb.agents import analyst
+    store, _ = env
+    control.set_enabled("analyst", True)
+    for sym, met in (("A5", 5), ("B6", 6), ("C4", 4), ("D7", 7)):
+        store.set("candidates", sym, {"passed": True, "met": met, "known": 7})
+    store.set("control", "llm", {"analyst_per_run": 2})
+    fake = cli([{"summary": "s", "families": FAMILIES}])
+    started = []
+    monkeypatch.setattr(control, "run_now", lambda a, **k: started.append(k) or "ok")
+    out = runner.run("analyst")
+    s = out["summary"]
+    assert s["eligible"] == 3 and sorted(s["scores"]) == ["B6", "D7"] and s["more_to_do"]
+    assert s["next_run"].startswith("started") and started[0]["env"]["MB_CHAIN"] == "1"
+    assert started[0]["exclude"] == out["run_id"]
+    monkeypatch.setenv("MB_CHAIN", "1")
+    s = runner.run("analyst")["summary"]
+    assert list(s["scores"]) == ["A5"] and not s["more_to_do"] and "next_run" not in s
+    assert store.get("scores", "C4") is None  # 4 of 7 is below the minimum
+    assert len(fake.calls) == 3
+
+    # Redo all: each stock is redone once across the chain, not once per run.
+    for k in ("A5", "B6", "D7"):
+        store.set("scores", k, {"analysed": f"2000-01-0{len(k)}"}, merge=True)  # before the redo started
+    monkeypatch.setenv("MB_REDO_SINCE", "2001-01-01")
+    first = analyst.run(store=store, log=LOG)
+    second = analyst.run(store=store, log=LOG)
+    assert analyst.run(store=store, log=LOG)["analysed"] == 0  # all redone once: nothing left
+    assert set(first["scores"]) | set(second["scores"]) == {"A5", "B6", "D7"}
+    assert not set(first["scores"]) & set(second["scores"])

@@ -431,19 +431,21 @@ def settings_page(request: Request, msg: str = ""):
 def settings_save(request: Request, provider: str = Form(...), model: str = Form(""), openai_model: str = Form(""),
                   openai_model_custom: str = Form(""), effort: str = Form(...), daily_cap_usd: float = Form(...),
                   openai_price_in: float = Form(2.5), openai_price_out: float = Form(15.0),
-                  analyst_per_run: int = Form(10), extraction_per_run: int = Form(10),
-                  redteam_per_run: int = Form(10)):
+                  analyst_per_run: int = Form(50), extraction_per_run: int = Form(50),
+                  redteam_per_run: int = Form(50), min_rules_met: int = Form(5)):
     if provider == "openai":
         model = (openai_model_custom or openai_model).strip()
     if provider not in llm.PROVIDERS or not llm.valid_model(provider, model) or effort not in llm.EFFORTS or \
             not 0 <= daily_cap_usd <= 50 or not (0 <= openai_price_in <= 500 and 0 <= openai_price_out <= 2000) or \
-            not all(1 <= n <= 50 for n in (analyst_per_run, extraction_per_run, redteam_per_run)):
+            not all(1 <= n <= 200 for n in (analyst_per_run, extraction_per_run, redteam_per_run)) or \
+            not 1 <= min_rules_met <= 7:
         raise HTTPException(400)
     user = current_user(request)
     get_store().set("control", "llm", {"provider": provider, "model": model, "effort": effort,
                                        "daily_cap_usd": daily_cap_usd, "openai_price_in": openai_price_in,
                                        "openai_price_out": openai_price_out, "analyst_per_run": analyst_per_run,
                                        "extraction_per_run": extraction_per_run, "redteam_per_run": redteam_per_run,
+                                       "min_rules_met": min_rules_met,
                                        "updated": now_iso(), "by": user},
                     merge=True)
     get_store().set("audit", f"{now_iso()}-llm-settings", {"at": now_iso(), "user": user, "action": "llm settings",

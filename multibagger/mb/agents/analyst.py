@@ -8,7 +8,7 @@ from __future__ import annotations
 from .. import inputs, llm
 from ..rules import WEIGHTS, conviction
 from ..store import now_iso
-from ._context import ARCHETYPES, GROUND_RULES, company_record, compact, per_run, strength
+from ._context import ARCHETYPES, GROUND_RULES, company_record, compact, eligible, per_run, strength
 
 
 
@@ -43,7 +43,7 @@ def run(store, log) -> dict:
     Inputs are the company record (fundamentals, screen, red flags, filings, facts), the active themes
     and this prompt. Unchanged names are skipped; a price move of 15%+ since the memo counts as a change.
     """
-    cands = [c for c in store.list("candidates", where=[("passed", "==", True)])]
+    cands = eligible(store)
     scores = {s["id"]: s for s in store.list("scores")}
     themes = [{"id": t["id"], "name": t.get("name"), "total": t.get("total")}
               for t in store.list("themes", where=[("active", "==", True)])]
@@ -53,7 +53,7 @@ def run(store, log) -> dict:
         rec = company_record(store, sym)
         key = inputs.digest(rec, themes, PROMPT)
         price = rec["fundamentals"].get("price")
-        if (prev and not inputs.redo() and prev.get("inputs_hash") == key
+        if (prev and not inputs.redo_due(prev.get("analysed")) and prev.get("inputs_hash") == key
                 and not inputs.price_moved(prev.get("price_at_analysis"), price)):
             unchanged += 1
             continue
@@ -62,12 +62,18 @@ def run(store, log) -> dict:
     todo.sort(key=lambda t: (t[0], strength(t[2])))
     picked = todo[:per_run(store, "analyst")]
     results, errors = {}, {}
+    stopped = None
     for _, sym, c, rec, key, price in picked:
+        if inputs.out_of_time():
+            stopped = "time"
+            log.warning("near the job timeout: stopping here, the next run continues")
+            break
         try:
             out = llm.complete_json(GROUND_RULES, PROMPT.format(
                 symbol=sym, weights=WEIGHTS, archetypes="; ".join(ARCHETYPES), themes=themes or "(none scored yet)",
                 record=compact(rec)), agent="analyst", store=store)
         except llm.BudgetExceeded as exc:
+            stopped = "daily cap"
             log.warning("%s", exc)
             break
         except Exception as exc:
@@ -89,6 +95,8 @@ def run(store, log) -> dict:
         store.set("memo_history", f"{sym}-{stamp}", memo)
         results[sym] = f"{score['score']} ({score['tier']})"
         log.info("%s: %s tier %s", sym, score["score"], score["tier"])
-    return {"analysed": len(results), "scores": results, "errors": errors,
-            "unchanged_skipped": unchanged, "still_to_do": max(0, len(todo) - len(results) - len(errors)),
+    left = max(0, len(todo) - len(results) - len(errors))
+    return {"analysed": len(results), "scores": results, "errors": errors, "eligible": len(cands),
+            "unchanged_skipped": unchanged, "still_to_do": left, "stopped_by": stopped,
+            "more_to_do": bool(left and results and stopped != "daily cap"),
             "remaining_unanalysed": max(0, sum(1 for c in cands if c["id"] not in scores) - len(results))}
