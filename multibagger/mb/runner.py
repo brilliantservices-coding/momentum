@@ -39,6 +39,14 @@ def run(agent_id: str, force: bool = False) -> dict:
         return {"status": "skipped", "reason": reason}
 
     run_id = os.getenv("CLOUD_RUN_EXECUTION") or f"{agent_id}-{uuid.uuid4().hex[:8]}"
+    from .control import active_runs
+    busy = active_runs(agent_id, exclude=run_id)
+    if busy:  # e.g. the schedule fired while a long Run now was still going: let that one finish
+        reason = f"an earlier run is still in progress ({busy[0].rsplit('/', 1)[-1]})"
+        print(f"skip {agent_id}: {reason}")
+        store.set("runs", run_id, {"agent": agent_id, "status": "skipped", "started": now_iso(),
+                                   "finished": now_iso(), "summary": {"skipped": reason}})
+        return {"status": "skipped", "reason": reason}
     handler = _ListHandler()
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s", "%H:%M:%S"))
     log = logging.getLogger(f"mb.{agent_id}")

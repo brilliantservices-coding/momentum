@@ -1,7 +1,7 @@
 """Theme analyst: scores Indian structural themes on the strategy's six dimensions (1-5 each)."""
 from __future__ import annotations
 
-from .. import llm
+from .. import inputs, llm
 from ..store import now_iso
 from ._context import GROUND_RULES
 
@@ -36,6 +36,12 @@ def run(store, log) -> dict:
             for t in store.list("themes")}
     heads = [f"{f.get('symbol')}: {(f.get('subject') or '')[:120]}"
              for f in store.list("filings", order_by="ingested", limit=80)]
+    key = inputs.digest(heads, PROMPT)
+    last = store.get("control", "theme_inputs") or {}
+    if prev and last.get("inputs_hash") == key and not inputs.redo():
+        log.info("themes: no new filings headlines since the last scoring; keeping the %d saved themes", len(prev))
+        return {"themes": len(prev), "unchanged_skipped": True,
+                "active": sorted(k for k, v in prev.items() if v.get("active"))}
     out = llm.complete_json(GROUND_RULES, PROMPT.format(headlines="\n".join(heads) or "(none)",
                                                        previous=prev or "(none)"), agent="theme", store=store)
     stamp, docs = now_iso(), {}
@@ -45,6 +51,7 @@ def run(store, log) -> dict:
                          "active": bool(t.get("active")), "bottleneck": t.get("bottleneck"),
                          "evidence": t.get("evidence", []), "change": t.get("change_vs_previous"), "scored": stamp}
     store.set_many("themes", docs)
+    store.set("control", "theme_inputs", {"inputs_hash": key, "scored": stamp})
     active = sorted((k for k, v in docs.items() if v["active"]), key=lambda k: -docs[k]["total"])
     log.info("themes: %d scored, active: %s", len(docs), ", ".join(active))
     return {"themes": len(docs), "active": active}

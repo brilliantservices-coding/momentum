@@ -83,13 +83,7 @@ def back(path: str, msg: str = ""):
     return RedirectResponse(f"{path}{'?msg=' + quote(msg) if msg else ''}", status_code=303)
 
 
-def _stale(started: str | None, timeout_s) -> bool:
-    """A run still marked running after its job timeout (plus slack) was cancelled or killed outside the runner."""
-    try:
-        t = datetime.fromisoformat(started)
-    except (TypeError, ValueError):
-        return False
-    return datetime.now(timezone.utc) - t > timedelta(seconds=int(timeout_s or 3600) + 600)
+_stale = control.is_stale
 
 
 def _agents_with_state():
@@ -210,7 +204,9 @@ def agent_detail(request: Request, agent_id: str, msg: str = ""):
     for r in runs:
         if r.get("status") == "running" and _stale(r.get("started"), agent.get("timeout")):
             r["status"] = "stopped"  # cancelled outside the portal; Cloud Run has the details
-    return render(request, "agent.html", agent=agent, runs=runs, msg=msg)
+    running = any(r.get("status") == "running" for r in runs)
+    return render(request, "agent.html", agent=agent, runs=runs, msg=msg, running=running,
+                  redo_agents=("theme", "analyst", "redteam", "fundamentals"))
 
 
 @app.post("/agents/{agent_id}/{action}")
@@ -218,11 +214,14 @@ def agent_action(request: Request, agent_id: str, action: str):
     if agent_id not in {a["id"] for a in load_agents()}:
         raise HTTPException(404)
     user = current_user(request)
-    if action == "run":
+    if action in ("run", "redo"):
         if (get_store().get("control", "global") or {}).get("killed"):
             return back(f"/agents/{agent_id}", "Kill switch is on: release it on the overview first")
-        control.run_now(agent_id)
-        msg = "Run started"
+        try:
+            control.run_now(agent_id, redo=action == "redo")
+        except control.AlreadyRunning:
+            return back(f"/agents/{agent_id}", "Already running: wait for that run to finish, or stop it first")
+        msg = "Run started (redoing every stock, ignoring saved results)" if action == "redo" else "Run started"
     elif action == "stop":
         msg = f"Stopped {control.stop(agent_id)} running execution(s)"
     elif action in ("pause", "resume"):
@@ -346,7 +345,11 @@ def import_fundamentals_inbox(request: Request):
         return back("/data", "No files waiting in the bucket")
     if (store.get("control", "global") or {}).get("killed"):
         return back("/data", "Kill switch is on: release it on the overview first")
-    control.run_now("screener")
+    try:
+        control.run_now("screener")
+    except control.AlreadyRunning:
+        return back("/data", "The screener is already running and will pick these files up if it hasn't yet; "
+                             "otherwise try again when it finishes")
     store.set("audit", f"{now_iso()}-import-inbox", {"at": now_iso(), "user": current_user(request),
                                                     "action": "import fundamentals inbox", "files": len(waiting)})
     return back("/data", f"Importing {len(waiting)} file(s) from the bucket: the screener is loading and "
@@ -376,7 +379,11 @@ async def upload_announcements(file: UploadFile = File(...)):
     except Exception as exc:
         return back("/data", f"Import failed: {exc}")
     get_blob().put(f"filings/inbox/{now_iso().replace(':', '')}-{name}", data, "text/csv")
-    control.run_now("ingestion")
+    try:
+        control.run_now("ingestion")
+    except control.AlreadyRunning:
+        return back("/data", f"Queued {report['rows']} {report['exchange']} announcements; the ingestion agent is "
+                             "already running, and the next run loads them if this one started before the upload")
     return back("/data", f"Queued {report['rows']} {report['exchange']} announcements; the ingestion agent is loading them now")
 
 

@@ -169,7 +169,7 @@ def test_portal_pages(env, monkeypatch):
     from portal.app import app
     store, _ = env
     started = []
-    monkeypatch.setattr(control, "run_now", lambda a: started.append(a) or "ok")
+    monkeypatch.setattr(control, "run_now", lambda a, **k: started.append(a) or "ok")
     c = TestClient(app)
     for path in ["/", "/candidates", "/candidates?all=1", "/alerts", "/filings", "/approvals", "/data", "/costs",
                  "/agents/screener"]:

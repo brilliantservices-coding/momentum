@@ -83,7 +83,7 @@ def test_data_page_imports_from_bucket(env, monkeypatch):
     from portal.app import app
     store, blob = env
     started = []
-    monkeypatch.setattr(control, "run_now", lambda a: started.append(a) or "ok")
+    monkeypatch.setattr(control, "run_now", lambda a, **k: started.append(a) or "ok")
     c = TestClient(app)
     assert "Nothing waiting in the bucket" in c.get("/data").text
     assert "No files waiting" in c.post("/data/fundamentals/import-inbox").text

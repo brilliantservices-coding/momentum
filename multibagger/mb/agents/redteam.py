@@ -1,7 +1,7 @@
 """Red-team agent: argues the bear case for tier A/B names and anything held that is down 35%+."""
 from __future__ import annotations
 
-from .. import llm
+from .. import inputs, llm
 from ..rules import TIERS
 from ..store import now_iso
 from ._context import GROUND_RULES, company_record, compact
@@ -27,13 +27,22 @@ def run(store, log) -> dict:
     held = {h["id"] for h in store.list("holdings")}
     todo += [s for s in store.list("scores") if s["id"] in held and s.get("drawdown_pct", 0) <= -35
              and s not in todo]
-    done = {}
+    done, unchanged = {}, 0
     for s in todo:
         sym = s["id"]
         memo = store.get("memos", sym) or {}
+        rec = company_record(store, sym)
+        key = inputs.digest(memo, rec, s.get("analysed"), PROMPT)
+        prev = store.get("redteam", sym) or {}
+        if prev.get("inputs_hash") == key and not inputs.redo():
+            # Same memo and evidence as last review: keep that verdict instead of asking again.
+            if s.get("redteam_needed"):
+                store.set("scores", sym, {"redteam_needed": False}, merge=True)
+            unchanged += 1
+            continue
         try:
             out = llm.complete_json(GROUND_RULES, PROMPT.format(symbol=sym, score=s.get("score"), tier=s.get("tier"),
-                                    memo=compact(memo, 30000), record=compact(company_record(store, sym))),
+                                    memo=compact(memo, 30000), record=compact(rec)),
                                     agent="redteam", store=store)
         except llm.BudgetExceeded as exc:
             log.warning("%s", exc)
@@ -43,9 +52,9 @@ def run(store, log) -> dict:
         tier = next((t for cut, t in TIERS if new >= cut), "Reject")
         stamp = now_iso()
         store.set("redteam", sym, {"symbol": sym, **out, "score_before": s.get("score"), "score_after": new,
-                                   "written": stamp})
+                                   "written": stamp, "inputs_hash": key})
         store.set("scores", sym, {"score": new, "tier": tier, "redteam_needed": False, "redteamed": stamp,
                                   "redteam_adjustment": new - float(s.get("score") or 0)}, merge=True)
         done[sym] = f"{s.get('score')} -> {new} ({tier})"
         log.info("%s: %s", sym, done[sym])
-    return {"reviewed": len(done), "changes": done}
+    return {"reviewed": len(done), "changes": done, "unchanged_skipped": unchanged}

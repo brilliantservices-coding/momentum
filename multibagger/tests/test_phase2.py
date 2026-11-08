@@ -253,3 +253,62 @@ def test_portal_settings_openai(env, monkeypatch):
     store.set("control", "llm_limits", {"openai": {"remaining_requests": "42", "limit_requests": "500",
                                                    "at": "2026-11-07T10:00:00+00:00", "model": "gpt-7-new"}})
     assert "42 of 500" in c.get("/settings").text
+
+
+def test_research_agents_skip_unchanged_inputs(env, cli, monkeypatch):
+    from mb.agents import analyst, redteam, theme
+    store, blob = env
+    _seed_watchlist(store, blob)
+    fake = cli([{"themes": [{"id": "defence", "name": "Defence", "active": True, "scores": {}}]}])
+    theme.run(store=store, log=LOG)
+    assert theme.run(store=store, log=LOG)["unchanged_skipped"] and len(fake.calls) == 1
+
+    fake = cli([{"summary": "s", "families": FAMILIES}])
+    assert analyst.run(store=store, log=LOG)["analysed"] == 1
+    again = analyst.run(store=store, log=LOG)
+    assert again["analysed"] == 0 and again["unchanged_skipped"] == 1 and len(fake.calls) == 1
+    store.set("fundamentals", "ALPHA", {"as_of": "2099-01-01", "stmt_as_of": "2099-01-01"}, merge=True)
+    assert analyst.run(store=store, log=LOG)["analysed"] == 0  # a refresh with the same numbers is no change
+    price = store.get("scores", "ALPHA")["price_at_analysis"]
+    assert price
+    store.set("fundamentals", "ALPHA", {"price": price * 1.05}, merge=True)
+    assert analyst.run(store=store, log=LOG)["analysed"] == 0  # small price moves don't count
+    store.set("fundamentals", "ALPHA", {"price": price * 1.3}, merge=True)
+    assert analyst.run(store=store, log=LOG)["analysed"] == 1
+    store.set("alerts", "ALPHA-x", {"symbol": "ALPHA", "rule": "x", "severity": "soft", "status": "open"})
+    assert analyst.run(store=store, log=LOG)["analysed"] == 1  # new evidence: analysed again
+    monkeypatch.setenv("MB_REDO", "1")
+    assert analyst.run(store=store, log=LOG)["analysed"] == 1
+    monkeypatch.delenv("MB_REDO")
+
+    fake = cli([{"bear_case": "b", "score_adjustment": -5, "verdict": "lower score"}])
+    assert redteam.run(store=store, log=LOG)["reviewed"] == 1
+    store.set("scores", "ALPHA", {"redteam_needed": True}, merge=True)  # nothing new since the review
+    out = redteam.run(store=store, log=LOG)
+    assert out["reviewed"] == 0 and out["unchanged_skipped"] == 1 and len(fake.calls) == 1
+    assert not store.get("scores", "ALPHA")["redteam_needed"]
+
+
+def test_one_run_at_a_time(env, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from mb import control, runner
+    from mb.store import now_iso
+    from portal.app import app
+    store, _ = env
+    store.set("runs", "screener-old", {"agent": "screener", "status": "running", "started": now_iso()})
+    out = runner.run("screener", force=True)
+    assert out["status"] == "skipped" and "still in progress" in out["reason"]
+    with pytest.raises(control.AlreadyRunning):
+        control.run_now("screener")
+    r = TestClient(app).post("/agents/screener/run", follow_redirects=False)
+    assert "Already%20running" in r.headers["location"]
+    store.set("runs", "screener-old", {"agent": "screener", "status": "running",
+                                       "started": "2020-01-01T00:00:00+00:00"})  # killed long ago: stale
+    assert control.active_runs("screener") == []
+    started = []
+    monkeypatch.setattr(control, "running_executions", lambda a: [])
+    monkeypatch.setattr(control.subprocess, "Popen", lambda cmd, **k: started.append(k["env"]) or
+                        type("P", (), {"pid": 1, "poll": lambda self: None})())
+    control.run_now("analyst", redo=True)
+    assert started[0]["MB_REDO"] == "1" and started[0]["MB_FORCE"] == "1"
