@@ -60,7 +60,8 @@ def run(store, log) -> dict:
             unchanged += 1
             continue
         todo.append((prev.get("analysed", ""), sym, c, rec, key, price))
-    todo.sort(key=lambda t: t[0])  # never-analysed first, then oldest memo
+    # Never-analysed first, then oldest memo; within that, the strongest Pass 1 screens go first.
+    todo.sort(key=lambda t: (t[0], -(t[2].get("met") or 0), (t[2].get("known") or 0) - (t[2].get("met") or 0), t[1]))
     picked = todo[:MAX_PER_RUN]
     results, errors = {}, {}
     for _, sym, c, rec, key, price in picked:
