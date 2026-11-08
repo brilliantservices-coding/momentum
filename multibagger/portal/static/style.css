@@ -21,7 +21,7 @@ main{padding:24px 0 60px}h1{font-size:22px;margin:0 0 4px}h2{font-size:16px;marg
 .meta{font-size:12.5px;color:var(--muted);display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px}
 .pill{display:inline-block;padding:1px 8px;border-radius:99px;font-size:12px;background:var(--chip);color:var(--ink)}
 .pill.succeeded,.pill.on{color:var(--good)}.pill.failed,.pill.hard,.pill.off{color:var(--bad)}
-.pill.running{color:var(--accent)}.pill.soft,.pill.skipped,.pill.cancelled{color:var(--warn)}
+.pill.running{color:var(--accent)}.pill.soft,.pill.skipped,.pill.cancelled,.pill.stopped{color:var(--warn)}
 .row{display:flex;gap:6px;flex-wrap:wrap}form{display:inline;margin:0}
 button,.btn{font:inherit;font-size:13px;padding:6px 12px;border-radius:8px;border:1px solid var(--line);
 background:var(--panel);color:var(--ink);cursor:pointer;text-decoration:none}

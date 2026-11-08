@@ -83,12 +83,24 @@ def back(path: str, msg: str = ""):
     return RedirectResponse(f"{path}{'?msg=' + quote(msg) if msg else ''}", status_code=303)
 
 
+def _stale(started: str | None, timeout_s) -> bool:
+    """A run still marked running after its job timeout (plus slack) was cancelled or killed outside the runner."""
+    try:
+        t = datetime.fromisoformat(started)
+    except (TypeError, ValueError):
+        return False
+    return datetime.now(timezone.utc) - t > timedelta(seconds=int(timeout_s or 3600) + 600)
+
+
 def _agents_with_state():
     store = get_store()
     out = []
     for a in load_agents():
         st = store.get("agents", a["id"]) or {}
-        out.append({**a, **st, "enabled": st.get("enabled", a.get("default_enabled", True))})
+        row = {**a, **st, "enabled": st.get("enabled", a.get("default_enabled", True))}
+        if row.get("last_status") == "running" and _stale(row.get("last_started"), a.get("timeout")):
+            row["last_status"] = "stopped"
+        out.append(row)
     return out
 
 
@@ -195,6 +207,9 @@ def agent_detail(request: Request, agent_id: str, msg: str = ""):
     if not agent:
         raise HTTPException(404)
     runs = get_store().list("runs", where=[("agent", "==", agent_id)], order_by="started", limit=30)
+    for r in runs:
+        if r.get("status") == "running" and _stale(r.get("started"), agent.get("timeout")):
+            r["status"] = "stopped"  # cancelled outside the portal; Cloud Run has the details
     return render(request, "agent.html", agent=agent, runs=runs, msg=msg)
 
 
