@@ -1,7 +1,7 @@
 {% extends "base.html" %}{% block body %}
 <p class="small"><a href="/research">← Research</a></p>
 <h1>{{sym}} {% if score.tier %}<span class="pill {{'on' if score.tier in ('A','B') else 'off' if score.tier=='Reject' else ''}}">tier {{score.tier}}</span>{% endif %}</h1>
-<p class="sub">{{ stock_link(sym, score.name or fundamentals.name) }} · score {{score.score}}{% if memo.archetype %} · {{memo.archetype}}{% endif %} · memo written {{memo.written|ist}}</p>
+<p class="sub">{{ stock_link(sym, score.name or fundamentals.name) }} · score {{score.score}}{% if score.rescored %} (was {{score.score_before_rescore}}, tier {{score.tier_before_rescore}}, before the {{score.rescored|ist('%d %b')}} recalculation){% endif %}{% if score.unverified %} · unverified: {{score.unverified|join(', ')}}{% endif %}{% if memo.archetype %} · {{memo.archetype}}{% endif %} · memo written {{memo.written|ist}}</p>
 {% if memo.summary %}<div class="card"><p style="margin-top:0">{{memo.summary}}</p>
 {% if memo.drivers %}<h3>Three drivers and their proof metrics</h3><ol>{% for d in memo.drivers %}<li>{{d.driver}} <span class="small">· proof: {{d.proof_metric}}</span></li>{% endfor %}</ol>{% endif %}
 {% if memo.valuation %}<p class="small">3-year value: bear {{memo.valuation.bear_3y}} · base {{memo.valuation.base_3y}} · bull {{memo.valuation.bull_3y}} (price {{memo.valuation.current_price}}). {{memo.valuation.method}}</p>{% endif %}

@@ -15,12 +15,20 @@ def test_conviction_rules():
             "governance": 10}
     assert conviction(full) == {**conviction(full), "score": 100.0, "tier": "A"}  # 100 + 5 bonus, capped
     assert conviction({**full, "financial": 99})["families"]["financial"] == 20  # clipped to weight
-    two_strong = {"theme": 15, "financial": 20, "management": 13, "visibility": 10, "ecosystem": 7, "valuation": 7}
+    two_strong = {"theme": 15, "financial": 20, "management": 8, "visibility": 6, "ecosystem": 4, "valuation": 5,
+                  "governance": 5}
     r = conviction(two_strong)
     assert r["strong_families"] == 2 and r["score"] == 60 and r["tier"] == "C"
     assert conviction(full, hard_flags=1)["score"] == 0
     assert conviction(full, soft_flags=3)["tier"] == "Reject"
     assert conviction({"financial": 16, "management": 15, "visibility": 12, "governance": 9, "theme": 13})["tier"] == "B"
+    # Revised rules (8 Nov): unverified = half weight, never strong; 2+ unverified cap the tier at C.
+    r = conviction({**full, "management": 0, "visibility": 0}, unverified=["management", "visibility"])
+    assert r["families"]["management"] == 10 and r["families"]["visibility"] == 7.5
+    assert r["strong_families"] == 5 and r["score"] == 87.5 and r["tier"] == "C"
+    r = conviction({**full, "ecosystem": 2}, unverified=["management"])
+    assert r["score"] == 87.0 and r["tier"] == "A"
+    assert conviction(full, soft_flags=2)["score"] == 94.0  # 100 capped, then -3 per soft flag
 
 
 class FakeCLI:
@@ -364,3 +372,28 @@ def test_min_rules_and_run_chain(env, cli, monkeypatch):
     assert analyst.run(store=store, log=LOG)["analysed"] == 0  # all redone once: nothing left
     assert set(first["scores"]) | set(second["scores"]) == {"A5", "B6", "D7"}
     assert not set(first["scores"]) & set(second["scores"])
+
+
+def test_rescore_old_memos_without_llm(env, cli):
+    from fastapi.testclient import TestClient
+
+    from mb import inputs, rescore
+    from mb.agents import analyst
+    from mb.agents._context import company_record
+    from portal.app import app
+    store, blob = env
+    _seed_watchlist(store, blob)
+    fam = {k: {"points": v["points"], "evidence": v["evidence"]} for k, v in FAMILIES.items()}
+    fam["management"] = {"points": 4, "evidence": ["general knowledge: no concall data, unknown"]}
+    fam["ecosystem"] = {"points": 2, "evidence": []}
+    rec = company_record(store, "ALPHA")
+    store.set("memos", "ALPHA", {"symbol": "ALPHA", "families": fam})
+    store.set("scores", "ALPHA", {"score": 40.0, "tier": "Reject", "analysed": "2026-11-08",
+                                  "inputs_hash": inputs.digest(rec, [], rescore.PROMPT_BEFORE_REVISION)})
+    r = TestClient(app).post("/research/rescore", follow_redirects=False)
+    assert "Recalculated%201" in r.headers["location"]
+    s = store.get("scores", "ALPHA")
+    assert s["unverified"] == ["ecosystem", "management"] and s["families"]["management"] == 10
+    assert s["score_before_rescore"] == 40.0 and s["score"] > 40 and s["tier"] == "C"  # 2 unverified cap at C
+    fake = cli([{}])
+    assert analyst.run(store=store, log=LOG)["analysed"] == 0 and not fake.calls  # no LLM re-run needed

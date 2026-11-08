@@ -135,31 +135,57 @@ def filing_flags(text: str) -> list[dict]:
 # ---- Conviction score (strategy doc: "Combining signals into a confidence score") ----
 WEIGHTS = {"theme": 15, "financial": 20, "management": 20, "visibility": 15, "ecosystem": 10,
            "valuation": 10, "governance": 10}
-TIERS = [(80, "A"), (65, "B"), (50, "C")]
+TIERS = [(75, "A"), (62, "B"), (52, "C")]
 SIZING = {"A": (4.0, 8.0), "B": (2.5, 5.0), "C": (1.0, 2.0)}  # starter %, max % of portfolio (cost)
+STRONG_SHARE = 0.6      # a family is strong at 60%+ of its weight (and verified)
+UNVERIFIED_SHARE = 0.5  # a family with no usable evidence gets half its weight
+SOFT_FLAG_COST = 3
 
 
-def conviction(families: dict, hard_flags: int = 0, soft_flags: int = 0) -> dict:
-    """families: {name: points awarded (0..weight)}. Applies caps, agreement bonus/cap, hard-flag zero."""
-    pts = {k: max(0.0, min(float(families.get(k) or 0), w)) for k, w in WEIGHTS.items()}
+def tier_for(score: float, unverified: int = 0) -> str:
+    """Tier from the score; two or more unverified families cap it at C."""
+    tier = next((t for cut, t in TIERS if score >= cut), "Reject")
+    return "C" if unverified >= 2 and tier in ("A", "B") else tier
+
+
+def conviction(families: dict, hard_flags: int = 0, soft_flags: int = 0, unverified=()) -> dict:
+    """families: {name: points awarded (0..weight)}; unverified: families with no usable evidence.
+
+    Revised 8 Nov 2026 (strategy doc, "Combining signals into a confidence score"): unverified families
+    get 50% of their weight and never count as strong; strong = 60%+ of weight; +5 for 5+ strong
+    families, capped at 60 with fewer than 3; each soft flag costs 3 points (3+ reject); a hard flag zeroes
+    the score; tiers A 75+, B 62+, C 52+, and 2+ unverified families cap the tier at C.
+    """
+    unv = sorted(k for k in set(unverified) if k in WEIGHTS)
+    pts = {k: (UNVERIFIED_SHARE * w if k in unv else max(0.0, min(float(families.get(k) or 0), w)))
+           for k, w in WEIGHTS.items()}
     total = sum(pts.values())
-    strong = sum(1 for k, w in WEIGHTS.items() if pts[k] > 0.7 * w)
+    strong = sum(1 for k, w in WEIGHTS.items() if k not in unv and pts[k] >= STRONG_SHARE * w)
     notes = []
+    if unv:
+        notes.append(f"unverified (half weight): {', '.join(unv)}")
     if strong >= 5:
         total += 5
-        notes.append("agreement bonus +5 (5+ families above 70% of weight)")
+        notes.append("agreement bonus +5 (5+ families at 60%+ of weight)")
     elif strong < 3 and total > 60:
         total = 60
-        notes.append("capped at 60 (fewer than 3 families above 70% of weight)")
+        notes.append("capped at 60 (fewer than 3 families at 60%+ of weight)")
+    total = min(total, 100)
     if hard_flags:
         total = 0
         notes.append("hard red flag: score set to 0")
     elif soft_flags >= 3:
         total = 0
         notes.append("3+ soft red flags: reject")
-    total = round(min(total, 100), 1)
-    tier = next((t for cut, t in TIERS if total >= cut), "Reject")
-    return {"score": total, "tier": tier, "families": pts, "strong_families": strong, "notes": notes}
+    elif soft_flags:
+        total -= SOFT_FLAG_COST * soft_flags
+        notes.append(f"{soft_flags} soft red flag(s): -{SOFT_FLAG_COST * soft_flags}")
+    total = round(max(0.0, min(total, 100)), 1)
+    tier = tier_for(total, len(unv))
+    if tier == "C" and len(unv) >= 2 and total >= TIERS[1][0]:
+        notes.append("tier capped at C (2+ unverified families)")
+    return {"score": total, "tier": tier, "families": pts, "strong_families": strong, "unverified": unv,
+            "notes": notes}
 
 
 RULE_LABELS = {"growth": "Growth (3y sales CAGR 15%+ or quarterly YoY 25%+)", "roce": "ROCE 15%+ (or 10%+ and rising 5 pts)",

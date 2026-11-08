@@ -20,7 +20,10 @@ accelerating revenue and margins; management = 80%+ guidance hit rate, clean cap
 buying; visibility = order book above 2x revenue, capacity on time, new customers qualified; ecosystem =
 customer/supplier/hiring/clearance/trade data independently confirm the story; valuation = base-case
 3-year value at least 2.5x the current price; governance = no hard flags and at most one soft flag.
-Score what the evidence supports; missing evidence earns low points, not average points.
+Score what the evidence supports. The record has fundamentals, the screen, red flags and filing
+headlines (no concall transcripts or annual reports), so some families may have no usable evidence at all:
+then set "unverified": true for that family (the system gives it half its weight and never counts it as
+strong) instead of guessing. Weak or negative evidence is not the same as no evidence: score it low.
 
 Archetypes: {archetypes}.
 Active themes: {themes}
@@ -31,7 +34,7 @@ Company record:
 Return {{"archetype": "...", "theme_id": "... or null", "summary": "2-3 sentences",
 "drivers": [{{"driver": "...", "proof_metric": "e.g. Q3 FY28 utilisation above 75%"}}] (exactly 3),
 "valuation": {{"current_price": n or null, "bull_3y": n, "base_3y": n, "bear_3y": n, "method": "..."}},
-"families": {{"theme": {{"points": n, "evidence": ["source: claim"]}}, "financial": {{...}}, "management": {{...}},
+"families": {{"theme": {{"points": n, "unverified": true|false, "evidence": ["source: claim"]}}, "financial": {{...}}, "management": {{...}},
 "visibility": {{...}}, "ecosystem": {{...}}, "valuation": {{...}}, "governance": {{...}}}},
 "key_risks": ["..."], "kill_criteria": ["observable condition that forces a sell"],
 "open_questions": ["what to read next"], "guidance_track_record": "met/missed summary or unknown"}}"""
@@ -83,7 +86,8 @@ def run(store, log) -> dict:
         fam = out.get("families", {})
         hard = sum(1 for a in rec["red_flags"] if a["severity"] == "hard" and a.get("status") != "dismissed")
         soft = sum(1 for a in rec["red_flags"] if a["severity"] == "soft" and a.get("status") != "dismissed")
-        score = conviction({k: (v or {}).get("points") for k, v in fam.items()}, hard, soft)
+        unverified = [k for k, v in fam.items() if (v or {}).get("unverified") is True]
+        score = conviction({k: (v or {}).get("points") for k, v in fam.items()}, hard, soft, unverified)
         stamp = now_iso()
         prev = store.get("scores", sym) or {}
         store.set("scores", sym, {"symbol": sym, "name": c.get("name"), **score, "archetype": out.get("archetype"),
