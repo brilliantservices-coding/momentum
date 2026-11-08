@@ -92,7 +92,9 @@ The token from `claude setup-token` lasts about a year. When AI runs fail with a
   A run cut short by the time budget carries on from the oldest symbols next time. Each week only
   stocks with new results (seen in the filings) or statements older than 4 weeks get a full download;
   the rest get a one-request price/market-cap refresh, and stocks far outside ₹200-40,000 cr are checked monthly.
-  The run summary shows the plan (`planned: full/light/skip`) and `minutes`.
+  Symbols refreshed in the last 72 h with no results since are left alone (`MB_YAHOO_FRESH_HOURS`), so a
+  second run the same week only fetches what is still pending.
+  The run summary shows the plan (`planned: full/light/skip/fresh`) and `minutes`.
 - **Trendlyne** (desktop task, Friday): downloads the "Multibagger fundamentals" data to
   `gs://…-raw/inbox/fundamentals/`, and the Saturday Screener imports it first. If Trendlyne renames a column,
   add the new name to `ALIASES` in `mb/fundamentals.py`. The Data page shows which columns were recognised.
@@ -102,6 +104,18 @@ The token from `claude setup-token` lasts about a year. When AI runs fail with a
 The desktop task needs the Claude desktop app open and Chrome available at 19:00 Mon/Thu. If the PC was off,
 download the last 7 days from nseindia.com (Corporate filings → Announcements → Download .csv) and upload
 it on the Data page. Duplicates are skipped. The Data page shows the latest filing date loaded.
+
+### One run at a time, and no repeated work
+- Run now is refused while the agent's previous run is still going (the portal checks Cloud Run's
+  executions). A scheduled run that fires meanwhile exits straight away and shows as `skipped` in the run list.
+- The theme analyst, company analyst and red team save a fingerprint of their inputs with each result
+  (`inputs_hash`). The analyst skips a stock unless its fundamentals, screen, red flags, filings, facts,
+  the active themes or the prompt changed, or the price moved 15%+ since the memo
+  (`MB_REANALYSE_PRICE_MOVE`). Timestamps and day-to-day market data don't count. Results are saved per
+  stock, so a run that stops early carries on with the pending ones next time. The red team re-reviews
+  only when the memo or evidence changed, and the theme analyst only when new filings headlines arrived.
+- Extraction marks each filing extracted, so it never reads one twice.
+- To redo everything once anyway, use **Run now, redo all** on the agent page (sets `MB_REDO=1`).
 
 ## Running things by hand
 

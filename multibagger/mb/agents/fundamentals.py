@@ -5,6 +5,8 @@ To keep the weekly run short, each symbol gets the cheapest refresh that keeps i
   within the last 4 weeks;
 - light (one request: price, market cap, P/E, volume): statements are under 4 weeks old and no
   results announcement has arrived since;
+- fresh: refreshed in the last MB_YAHOO_FRESH_HOURS (72 h) with no results since, so a second run
+  the same week (after a cut-off or a Run now) only fetches the symbols still pending;
 - full (summary + annual P&L, balance sheet, cash flow, quarterly P&L): everything else.
 
 Replaces the manual Screener export (which needs a paid plan to download). A portal upload still
@@ -17,7 +19,7 @@ import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from .. import yahoo
+from .. import inputs, yahoo
 from ..fundamentals import fresh_overlays
 from ..store import now_iso
 
@@ -31,18 +33,20 @@ LIMIT = int(os.getenv("MB_YAHOO_LIMIT", "0"))  # 0 = whole universe; set for a q
 SOURCE = "Yahoo Finance (weekly agent)"
 FAR_LOW, FAR_HIGH = 200.0, 40000.0
 STATEMENT_MAX_AGE_DAYS = 28
+FRESH_HOURS = float(os.getenv("MB_YAHOO_FRESH_HOURS", "72"))
 RESULTS_WORDS = ("financial result", "quarterly result", "audited result", "unaudited result")
 
 
-def _days_ago(days: int) -> str:
+def _days_ago(days: float) -> str:
     from datetime import datetime, timedelta, timezone
     return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(timespec="seconds")
 
 
 def plan(store, universe: list[str]) -> dict[str, str]:
-    """symbol -> "skip" | "light" | "full"."""
+    """symbol -> "skip" | "fresh" | "light" | "full"."""
     prev = {f["id"]: f for f in store.list("fundamentals")}
     cutoff = _days_ago(STATEMENT_MAX_AGE_DAYS)
+    fresh = _days_ago(FRESH_HOURS / 24) if FRESH_HOURS > 0 and not inputs.redo() else None
     results = {}
     for f in store.list("filings", where=[("ingested", ">=", cutoff)]):
         text = f"{f.get('category', '')} {f.get('subject', '')}".lower()
@@ -54,7 +58,9 @@ def plan(store, universe: list[str]) -> dict[str, str]:
         mcap, checked = p.get("mcap"), p.get("as_of") or ""
         # Records from before stmt_as_of existed: a full fetch is the one that has statement fields.
         stmts = p.get("stmt_as_of") or (checked if "roce_3y_avg" in p and not p.get("out_of_range") else "")
-        if mcap is not None and (mcap < FAR_LOW or mcap > FAR_HIGH) and checked >= cutoff:
+        if fresh and checked >= fresh and results.get(sym, "") <= checked:
+            out[sym] = "fresh"
+        elif mcap is not None and (mcap < FAR_LOW or mcap > FAR_HIGH) and checked >= cutoff:
             out[sym] = "skip"
         elif stmts >= cutoff and results.get(sym, "") <= stmts:
             out[sym] = "light"
@@ -69,7 +75,7 @@ def run(store, log, fetch=yahoo.fetch) -> dict:
         raise RuntimeError("universe is empty: run the Universe builder first")
     seen = {f["id"]: f.get("as_of", "") for f in store.list("fundamentals")}
     modes = plan(store, universe)
-    symbols = sorted((s for s in universe if modes[s] != "skip"), key=lambda s: (modes[s] != "full", seen.get(s, "")))
+    symbols = sorted((s for s in universe if modes[s] not in ("skip", "fresh")), key=lambda s: (modes[s] != "full", seen.get(s, "")))
     if LIMIT:
         symbols = symbols[:LIMIT]
     overlays = fresh_overlays(store)  # Trendlyne/Screener fields win over Yahoo's for the stocks they cover
@@ -138,7 +144,7 @@ def run(store, log, fetch=yahoo.fetch) -> dict:
     flags = forensic.run(store=store, log=log)
     log.info("yahoo: %d symbols, %d with full statements, %d not on Yahoo, %d errors",
              done, in_range, missing, len(errors))
-    counts = {m: sum(1 for v in modes.values() if v == m) for m in ("full", "light", "skip")}
+    counts = {m: sum(1 for v in modes.values() if v == m) for m in ("full", "light", "skip", "fresh")}
     return {"symbols": done, "planned": counts, "minutes": round((time.monotonic() - start) / 60, 1),
             "with_statements": in_range, "not_found": missing, "errors": len(errors),
             "sample_errors": dict(list(errors.items())[:5]), "complete": done == len(symbols),

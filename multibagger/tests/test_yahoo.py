@@ -141,8 +141,9 @@ def test_trendlyne_data_downloader_xlsx():
     assert parse(buf2.getvalue(), "t.xlsx")[0]["BETA"]["pe"] == 12
 
 
-def test_refresh_plan_skips_and_light_refreshes(env):
+def test_refresh_plan_skips_and_light_refreshes(env, monkeypatch):
     from mb.agents import fundamentals
+    monkeypatch.setattr(fundamentals, "FRESH_HOURS", 0)  # this test is about the weekly plan
     from mb.yahoo import info_fields, metrics
     store, _ = env
     for s in ["ALPHA", "BIGCO", "TINY", "RESULTS"]:
@@ -159,12 +160,12 @@ def test_refresh_plan_skips_and_light_refreshes(env):
             return {**info_fields({**INFO, "currentPrice": 600.0}), "light": True}
         return metrics(INFO, INCOME, BALANCE, CASH)
     first = fundamentals.run(store=store, log=LOG, fetch=fake)
-    assert first["planned"] == {"full": 4, "light": 0, "skip": 0} and first["with_statements"] == 2
+    assert first["planned"] == {"full": 4, "light": 0, "skip": 0, "fresh": 0} and first["with_statements"] == 2
     store.set("filings", "f1", {"symbol": "RESULTS", "category": "Outcome of Board Meeting",
                                 "subject": "Unaudited Financial Results for Q2", "ingested": "2099-01-01T00:00:00+00:00"})
     calls.clear()
     second = fundamentals.run(store=store, log=LOG, fetch=fake)
-    assert second["planned"] == {"full": 1, "light": 1, "skip": 2}
+    assert second["planned"] == {"full": 1, "light": 1, "skip": 2, "fresh": 0}
     assert sorted(calls) == [("ALPHA", True), ("RESULTS", False)]
     a = store.get("fundamentals", "ALPHA")
     assert a["price"] == 600.0 and a["roce"] is not None  # light refresh kept the statement fields
@@ -183,3 +184,26 @@ def test_yahoo_run_stops_when_refused(env, monkeypatch):
         raise RuntimeError("HTTP Error 401: Unauthorized Invalid Crumb")
     out = agent.run(store=store, log=logging.getLogger("t"), fetch=refuse)
     assert out["yahoo_cut_off"] and not out["complete"] and len(calls) < 40
+
+
+def test_rerun_same_week_only_fetches_pending(env, monkeypatch):
+    from mb.agents import fundamentals as agent
+    from mb.yahoo import metrics
+    store, _ = env
+    for s in ["A", "B", "C"]:
+        store.set("universe", s, {"symbol": s})
+    calls = []
+
+    def fake(sym, lo, hi, light=False):
+        calls.append(sym)
+        if sym == "C" and len(calls) <= 3:
+            raise RuntimeError("timeout")
+        return metrics(INFO, INCOME, BALANCE, CASH)
+    agent.run(store=store, log=LOG, fetch=fake)
+    calls.clear()
+    out = agent.run(store=store, log=LOG, fetch=fake)
+    assert calls == ["C"] and out["planned"]["fresh"] == 2
+    monkeypatch.setenv("MB_REDO", "1")
+    calls.clear()
+    agent.run(store=store, log=LOG, fetch=fake)
+    assert sorted(calls) == ["A", "B", "C"]

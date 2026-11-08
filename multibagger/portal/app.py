@@ -83,13 +83,7 @@ def back(path: str, msg: str = ""):
     return RedirectResponse(f"{path}{'?msg=' + quote(msg) if msg else ''}", status_code=303)
 
 
-def _stale(started: str | None, timeout_s) -> bool:
-    """A run still marked running after its job timeout (plus slack) was cancelled or killed outside the runner."""
-    try:
-        t = datetime.fromisoformat(started)
-    except (TypeError, ValueError):
-        return False
-    return datetime.now(timezone.utc) - t > timedelta(seconds=int(timeout_s or 3600) + 600)
+_stale = control.is_stale
 
 
 def _agents_with_state():
@@ -154,7 +148,7 @@ def _funnel():
         elif reached < 5:
             why = "; ".join(pass1_reasons(c)) or "did not pass"
         else:
-            why = ["not analysed yet (analyst runs 5 names per run)", f"score {s and s.get('score')} below 50",
+            why = ["not analysed yet (the analyst takes the strongest screens first, a set number per run)", f"score {s and s.get('score')} below 50",
                    "waiting for the red team", "no ticket yet (portfolio agent)", "ticket awaiting your decision"][reached - 5]
         rows.append({**c, "reached": reached, "stage": stage_names[reached - 1], "why": why,
                      "score": s and s.get("score"), "tier": s and s.get("tier")})
@@ -210,7 +204,9 @@ def agent_detail(request: Request, agent_id: str, msg: str = ""):
     for r in runs:
         if r.get("status") == "running" and _stale(r.get("started"), agent.get("timeout")):
             r["status"] = "stopped"  # cancelled outside the portal; Cloud Run has the details
-    return render(request, "agent.html", agent=agent, runs=runs, msg=msg)
+    running = any(r.get("status") == "running" for r in runs)
+    return render(request, "agent.html", agent=agent, runs=runs, msg=msg, running=running,
+                  redo_agents=("theme", "analyst", "redteam", "fundamentals"))
 
 
 @app.post("/agents/{agent_id}/{action}")
@@ -218,11 +214,14 @@ def agent_action(request: Request, agent_id: str, action: str):
     if agent_id not in {a["id"] for a in load_agents()}:
         raise HTTPException(404)
     user = current_user(request)
-    if action == "run":
+    if action in ("run", "redo"):
         if (get_store().get("control", "global") or {}).get("killed"):
             return back(f"/agents/{agent_id}", "Kill switch is on: release it on the overview first")
-        control.run_now(agent_id)
-        msg = "Run started"
+        try:
+            control.run_now(agent_id, redo=action == "redo")
+        except control.AlreadyRunning:
+            return back(f"/agents/{agent_id}", "Already running: wait for that run to finish, or stop it first")
+        msg = "Run started (redoing every stock, ignoring saved results)" if action == "redo" else "Run started"
     elif action == "stop":
         msg = f"Stopped {control.stop(agent_id)} running execution(s)"
     elif action in ("pause", "resume"):
@@ -346,7 +345,11 @@ def import_fundamentals_inbox(request: Request):
         return back("/data", "No files waiting in the bucket")
     if (store.get("control", "global") or {}).get("killed"):
         return back("/data", "Kill switch is on: release it on the overview first")
-    control.run_now("screener")
+    try:
+        control.run_now("screener")
+    except control.AlreadyRunning:
+        return back("/data", "The screener is already running and will pick these files up if it hasn't yet; "
+                             "otherwise try again when it finishes")
     store.set("audit", f"{now_iso()}-import-inbox", {"at": now_iso(), "user": current_user(request),
                                                     "action": "import fundamentals inbox", "files": len(waiting)})
     return back("/data", f"Importing {len(waiting)} file(s) from the bucket: the screener is loading and "
@@ -376,7 +379,11 @@ async def upload_announcements(file: UploadFile = File(...)):
     except Exception as exc:
         return back("/data", f"Import failed: {exc}")
     get_blob().put(f"filings/inbox/{now_iso().replace(':', '')}-{name}", data, "text/csv")
-    control.run_now("ingestion")
+    try:
+        control.run_now("ingestion")
+    except control.AlreadyRunning:
+        return back("/data", f"Queued {report['rows']} {report['exchange']} announcements; the ingestion agent is "
+                             "already running, and the next run loads them if this one started before the upload")
     return back("/data", f"Queued {report['rows']} {report['exchange']} announcements; the ingestion agent is loading them now")
 
 
@@ -423,16 +430,19 @@ def settings_page(request: Request, msg: str = ""):
 @app.post("/settings")
 def settings_save(request: Request, provider: str = Form(...), model: str = Form(""), openai_model: str = Form(""),
                   openai_model_custom: str = Form(""), effort: str = Form(...), daily_cap_usd: float = Form(...),
-                  openai_price_in: float = Form(2.5), openai_price_out: float = Form(15.0)):
+                  openai_price_in: float = Form(2.5), openai_price_out: float = Form(15.0),
+                  analyst_per_run: int = Form(10)):
     if provider == "openai":
         model = (openai_model_custom or openai_model).strip()
     if provider not in llm.PROVIDERS or not llm.valid_model(provider, model) or effort not in llm.EFFORTS or \
-            not 0 <= daily_cap_usd <= 50 or not (0 <= openai_price_in <= 500 and 0 <= openai_price_out <= 2000):
+            not 0 <= daily_cap_usd <= 50 or not (0 <= openai_price_in <= 500 and 0 <= openai_price_out <= 2000) or \
+            not 1 <= analyst_per_run <= 50:
         raise HTTPException(400)
     user = current_user(request)
     get_store().set("control", "llm", {"provider": provider, "model": model, "effort": effort,
                                        "daily_cap_usd": daily_cap_usd, "openai_price_in": openai_price_in,
-                                       "openai_price_out": openai_price_out, "updated": now_iso(), "by": user},
+                                       "openai_price_out": openai_price_out, "analyst_per_run": analyst_per_run,
+                                       "updated": now_iso(), "by": user},
                     merge=True)
     get_store().set("audit", f"{now_iso()}-llm-settings", {"at": now_iso(), "user": user, "action": "llm settings",
                                                           "provider": provider, "model": model})

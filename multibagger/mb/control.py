@@ -8,8 +8,9 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from datetime import datetime, timedelta, timezone
 
-from .config import ROOT, load_agents, settings
+from .config import ROOT, agent_by_id, load_agents, settings
 from .store import get_store, now_iso
 
 _local_procs: dict[str, subprocess.Popen] = {}
@@ -23,11 +24,46 @@ def _sched_name(agent_id: str) -> str:
     return f"projects/{settings.project}/locations/{settings.region}/jobs/{settings.job_prefix}{agent_id}-schedule"
 
 
-def run_now(agent_id: str) -> str:
-    """Starts an execution that ignores the paused flag (an explicit human request)."""
+class AlreadyRunning(RuntimeError):
+    """An earlier run of the agent hasn't finished; a second one would redo the same work."""
+
+
+def is_stale(started: str | None, timeout_s) -> bool:
+    """A run still marked running after its job timeout (plus slack) was cancelled or killed outside the runner."""
+    try:
+        t = datetime.fromisoformat(started)
+    except (TypeError, ValueError):
+        return False
+    return datetime.now(timezone.utc) - t > timedelta(seconds=int(timeout_s or 3600) + 600)
+
+
+def active_runs(agent_id: str, exclude: str | None = None) -> list[str]:
+    """Runs of the agent still in progress. Cloud Run's execution list is the truth in GCP (it also
+    covers an execution that is starting up); the runs table is the fallback when it can't be read."""
+    if settings.backend == "gcp":
+        try:
+            return [n for n in running_executions(agent_id) if not exclude or n.rsplit("/", 1)[-1] != exclude]
+        except Exception:
+            pass
+    elif running_executions(agent_id):
+        return running_executions(agent_id)
+    timeout = agent_by_id(agent_id).get("timeout")
+    return [r["id"] for r in get_store().list("runs", where=[("agent", "==", agent_id), ("status", "==", "running")])
+            if r["id"] != exclude and not is_stale(r.get("started"), timeout)]
+
+
+def run_now(agent_id: str, redo: bool = False) -> str:
+    """Starts an execution that ignores the paused flag (an explicit human request).
+
+    Refuses (AlreadyRunning) while an earlier run is in progress. redo=True makes the research agents
+    ignore their saved results once and redo every stock (MB_REDO=1).
+    """
+    if active_runs(agent_id):
+        raise AlreadyRunning(f"{agent_id} is already running")
+    extra = {"MB_FORCE": "1", **({"MB_REDO": "1"} if redo else {})}
     if settings.backend != "gcp":
         proc = subprocess.Popen([sys.executable, "-m", "mb.runner", agent_id, "--force"], cwd=ROOT,
-                                env={**os.environ}, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                                env={**os.environ, **extra}, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         _local_procs[agent_id] = proc
         return f"local pid {proc.pid}"
     from google.cloud import run_v2
@@ -35,7 +71,8 @@ def run_now(agent_id: str) -> str:
     req = run_v2.RunJobRequest(
         name=_job_name(agent_id),
         overrides=run_v2.RunJobRequest.Overrides(container_overrides=[
-            run_v2.RunJobRequest.Overrides.ContainerOverride(env=[run_v2.EnvVar(name="MB_FORCE", value="1")])]),
+            run_v2.RunJobRequest.Overrides.ContainerOverride(
+                env=[run_v2.EnvVar(name=k, value=v) for k, v in extra.items()])]),
     )
     op = run_v2.JobsClient().run_job(request=req)
     return op.metadata.name if op.metadata else "started"
