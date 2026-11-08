@@ -312,3 +312,21 @@ def test_one_run_at_a_time(env, monkeypatch):
                         type("P", (), {"pid": 1, "poll": lambda self: None})())
     control.run_now("analyst", redo=True)
     assert started[0]["MB_REDO"] == "1" and started[0]["MB_FORCE"] == "1"
+
+
+def test_agents_take_best_qualified_first(env, cli):
+    from mb.agents import extraction, redteam
+    store, _ = env
+    for sym, met in (("WEAK", 4), ("STRONG", 7), ("MID", 5)):
+        store.set("candidates", sym, {"passed": True, "met": met, "known": 7})
+        store.set("filings", f"{sym}-1", {"symbol": sym, "subject": "Order win", "ingested": "2026-11-01"})
+    store.set("control", "llm", {"extraction_per_run": 2, "redteam_per_run": 1})
+    fake = cli([{"facts": []}])
+    assert extraction.run(store=store, log=LOG)["filings"] == 2
+    sent = fake.calls[0][1]
+    assert "STRONG-1" in sent and "MID-1" in sent and "WEAK-1" not in sent
+    for sym, score in (("STRONG", 70), ("MID", 90)):
+        store.set("scores", sym, {"score": score, "tier": "B", "redteam_needed": True, "analysed": "x"})
+    cli([{"bear_case": "b", "score_adjustment": 0, "verdict": "hold score"}])
+    out = redteam.run(store=store, log=LOG)
+    assert list(out["changes"]) == ["MID"] and out["still_to_do"] == 1

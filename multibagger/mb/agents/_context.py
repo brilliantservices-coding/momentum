@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 
 ARCHETYPES = ["Small leader in a large, growing market", "Policy tailwind beneficiary", "Turnaround",
               "Cyclical at the bottom", "Formalisation and premiumisation", "Platform or financialisation"]
@@ -41,3 +42,15 @@ def company_record(store, symbol: str, max_filings: int = 60) -> dict:
                      "subject": (x.get("subject") or "")[:600]} for x in filings],
         "extracted_facts": [{k: v for k, v in x.items() if k not in ("symbol",)} for x in facts],
     }
+
+
+def strength(c: dict) -> tuple:
+    """Sort key for watchlist candidates: most Pass 1 rules met first, then fewest rules failed."""
+    met, known = c.get("met") or 0, c.get("known") or 0
+    return (-met, known - met, c.get("id") or "")
+
+
+def per_run(store, agent: str, default: int = 10) -> int:
+    """Stocks an agent handles per run: the Settings page value; MB_<AGENT>_MAX on the job overrides it."""
+    from .. import llm
+    return int(os.getenv(f"MB_{agent.upper()}_MAX") or llm.get_settings(store).get(f"{agent}_per_run") or default)

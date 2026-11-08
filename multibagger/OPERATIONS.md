@@ -115,6 +115,9 @@ it on the Data page. Duplicates are skipped. The Data page shows the latest fili
   stock, so a run that stops early carries on with the pending ones next time. The red team re-reviews
   only when the memo or evidence changed, and the theme analyst only when new filings headlines arrived.
 - Extraction marks each filing extracted, so it never reads one twice.
+- **Best-qualified first.** The analyst and extraction take the watchlist stocks that met the most Pass 1
+  rules first; the red team takes falling holdings, then the highest scores. How many stocks each takes per
+  run is on the Settings page (Stocks per run, default 10). `MB_<AGENT>_MAX` on a job overrides it.
 - To redo everything once anyway, use **Run now, redo all** on the agent page (sets `MB_REDO=1`).
 
 ## Running things by hand

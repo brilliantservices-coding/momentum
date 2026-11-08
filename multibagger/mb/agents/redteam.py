@@ -4,7 +4,7 @@ from __future__ import annotations
 from .. import inputs, llm
 from ..rules import TIERS
 from ..store import now_iso
-from ._context import GROUND_RULES, company_record, compact
+from ._context import GROUND_RULES, company_record, compact, per_run
 
 PROMPT = """You are the red team. The analyst scored {symbol} at {score} (tier {tier}). Your job is to find what
 the analyst missed: accounting quality, governance, customer concentration, competition, cyclicality
@@ -27,8 +27,13 @@ def run(store, log) -> dict:
     held = {h["id"] for h in store.list("holdings")}
     todo += [s for s in store.list("scores") if s["id"] in held and s.get("drawdown_pct", 0) <= -35
              and s not in todo]
+    # Falling holdings first (risk to money already in), then the highest scores.
+    todo.sort(key=lambda s: (s["id"] not in held, -(s.get("score") or 0)))
+    limit, reviewed = per_run(store, "redteam"), 0
     done, unchanged = {}, 0
     for s in todo:
+        if reviewed >= limit:
+            break
         sym = s["id"]
         memo = store.get("memos", sym) or {}
         rec = company_record(store, sym)
@@ -40,6 +45,7 @@ def run(store, log) -> dict:
                 store.set("scores", sym, {"redteam_needed": False}, merge=True)
             unchanged += 1
             continue
+        reviewed += 1
         try:
             out = llm.complete_json(GROUND_RULES, PROMPT.format(symbol=sym, score=s.get("score"), tier=s.get("tier"),
                                     memo=compact(memo, 30000), record=compact(rec)),
@@ -57,4 +63,5 @@ def run(store, log) -> dict:
                                   "redteam_adjustment": new - float(s.get("score") or 0)}, merge=True)
         done[sym] = f"{s.get('score')} -> {new} ({tier})"
         log.info("%s: %s", sym, done[sym])
-    return {"reviewed": len(done), "changes": done, "unchanged_skipped": unchanged}
+    return {"reviewed": len(done), "changes": done, "unchanged_skipped": unchanged,
+            "still_to_do": max(0, len(todo) - unchanged - reviewed)}
