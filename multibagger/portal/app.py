@@ -21,7 +21,7 @@ from mb import control, llm
 from mb.blob import get_blob
 from mb.config import load_agents, settings
 from mb.announcements import parse as parse_announcements
-from mb.fundamentals import import_file
+from mb.fundamentals import INBOX as FUND_INBOX, import_file
 from mb.agents.ingestion import rebuild_coverage
 from mb.rules import GATE_LABELS, RULE_LABELS, WEIGHTS, pass1_reasons
 from mb.timefmt import age_days, ist
@@ -328,9 +328,29 @@ def approval_decide(request: Request, pid: str, decision: str = Form(...), note:
 @app.get("/data", response_class=HTMLResponse)
 def data_page(request: Request, msg: str = ""):
     store = get_store()
+    blob = get_blob()
     return render(request, "data.html", fundamentals=store.get("control", "fundamentals"), fresh=_freshness(),
-                  universe=len(store.list("universe")), inbox=get_blob().list("filings/inbox/"),
-                  processed=get_blob().list("filings/processed/")[-5:], msg=msg)
+                  universe=len(store.list("universe")), inbox=blob.list("filings/inbox/"),
+                  processed=blob.list("filings/processed/")[-5:], fund_inbox=blob.list(FUND_INBOX),
+                  fund_processed=sorted(blob.list("fundamentals/processed/"))[-5:],
+                  upload=store.get("control", "fundamentals_upload"), msg=msg)
+
+
+@app.post("/data/fundamentals/import-inbox")
+def import_fundamentals_inbox(request: Request):
+    """Starts the screener now: it imports the files waiting in the bucket (the Friday Trendlyne download),
+    runs the red-flag checks on them and re-screens, instead of waiting for Saturday 07:00."""
+    store = get_store()
+    waiting = get_blob().list(FUND_INBOX)
+    if not waiting:
+        return back("/data", "No files waiting in the bucket")
+    if (store.get("control", "global") or {}).get("killed"):
+        return back("/data", "Kill switch is on: release it on the overview first")
+    control.run_now("screener")
+    store.set("audit", f"{now_iso()}-import-inbox", {"at": now_iso(), "user": current_user(request),
+                                                    "action": "import fundamentals inbox", "files": len(waiting)})
+    return back("/data", f"Importing {len(waiting)} file(s) from the bucket: the screener is loading and "
+                         "re-screening now (a few minutes). Refresh this page to see the result.")
 
 
 @app.post("/data/fundamentals")
