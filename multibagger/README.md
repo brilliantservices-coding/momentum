@@ -81,6 +81,11 @@ Agents 6-10 shipped **paused**; run each once from the portal, check its output,
     `claude setup-token` (Secret Manager `mb-claude-oauth-token`, mounted as `CLAUDE_CODE_OAUTH_TOKEN`).
     Counts against your Claude plan, not the GCP bill.
   - `vertex`: Claude on Vertex AI via the Anthropic SDK, billed per token to the project.
+  - `openai`: OpenAI Responses API with the key in Secret Manager `mb-openai-api-key` (mounted as
+    `OPENAI_API_KEY` in the jobs and the portal, which lists the account's models). Prices per million tokens
+    are set on the Settings page; each reply's rate-limit headers are kept in `control/llm_limits`.
+- The Settings page shows today's spend against the daily cap, this month's spend per provider, and the OpenAI
+  per-minute limits left.
 - Every call asks for one JSON object, checks a daily USD cap first (`llm_spend/<date>`) and logs to `llm_calls/`.
 
 ### Portal (`portal/app.py`)

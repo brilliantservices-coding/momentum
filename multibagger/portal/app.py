@@ -372,21 +372,33 @@ def research_company(request: Request, symbol: str):
 @app.get("/settings", response_class=HTMLResponse)
 def settings_page(request: Request, msg: str = ""):
     store = get_store()
+    cfg = llm.get_settings(store)
     calls = store.list("llm_calls", order_by="at", limit=20)
-    return render(request, "settings.html", llm=llm.get_settings(store), models=llm.MODELS, prices=llm.PRICES,
-                  spend=llm.spend_today(store), calls=calls, token_set=bool(os.getenv("CLAUDE_CODE_OAUTH_TOKEN")),
-                  msg=msg)
+    spend = llm.spend_today(store)
+    cap = float(cfg["daily_cap_usd"])
+    ready = {"subscription": bool(os.getenv("MB_CLAUDE_TOKEN_SET") or os.getenv("CLAUDE_CODE_OAUTH_TOKEN")),
+             "vertex": True,
+             "openai": bool(os.getenv("MB_OPENAI_KEY_SET") or os.getenv("OPENAI_API_KEY"))}
+    return render(request, "settings.html", llm=cfg, providers=llm.PROVIDERS, models=llm.MODELS, prices=llm.PRICES,
+                  openai_models=llm.openai_models(), efforts=llm.EFFORTS, spend=spend, cap=cap,
+                  left=max(0.0, cap - float(spend.get("usd") or 0)), month=llm.month_usage(store),
+                  limits=llm.limits(store), calls=calls, ready=ready, msg=msg)
 
 
 @app.post("/settings")
-def settings_save(request: Request, provider: str = Form(...), model: str = Form(...), effort: str = Form(...),
-                  daily_cap_usd: float = Form(...)):
-    if provider not in ("subscription", "vertex") or model not in llm.MODELS or \
-            effort not in ("low", "medium", "high", "xhigh", "max") or not 0 <= daily_cap_usd <= 50:
+def settings_save(request: Request, provider: str = Form(...), model: str = Form(""), openai_model: str = Form(""),
+                  openai_model_custom: str = Form(""), effort: str = Form(...), daily_cap_usd: float = Form(...),
+                  openai_price_in: float = Form(2.5), openai_price_out: float = Form(15.0)):
+    if provider == "openai":
+        model = (openai_model_custom or openai_model).strip()
+    if provider not in llm.PROVIDERS or not llm.valid_model(provider, model) or effort not in llm.EFFORTS or \
+            not 0 <= daily_cap_usd <= 50 or not (0 <= openai_price_in <= 500 and 0 <= openai_price_out <= 2000):
         raise HTTPException(400)
     user = current_user(request)
     get_store().set("control", "llm", {"provider": provider, "model": model, "effort": effort,
-                                       "daily_cap_usd": daily_cap_usd, "updated": now_iso(), "by": user}, merge=True)
+                                       "daily_cap_usd": daily_cap_usd, "openai_price_in": openai_price_in,
+                                       "openai_price_out": openai_price_out, "updated": now_iso(), "by": user},
+                    merge=True)
     get_store().set("audit", f"{now_iso()}-llm-settings", {"at": now_iso(), "user": user, "action": "llm settings",
                                                           "provider": provider, "model": model})
     return back("/settings", "Saved. Agents use the new settings from their next run.")

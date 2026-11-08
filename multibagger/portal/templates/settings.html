@@ -1,18 +1,34 @@
 {% extends "base.html" %}{% block body %}
-<h1>Settings</h1><p class="sub">Which Claude the research agents use. Changes apply from each agent's next run.</p>
+<h1>Settings</h1><p class="sub">Which model the research agents use. Changes apply from each agent's next run.</p>
+<h2>Usage and limits</h2>
+<div class="card">
+<p style="margin-top:0"><strong>Today (UTC day):</strong> ${{ "%.2f"|format(spend.usd or 0) }} used of the ${{ "%.2f"|format(cap) }} daily cap, <strong>${{ "%.2f"|format(left) }} left</strong>, {{spend.calls or 0}} call(s).</p>
+<div class="tablewrap"><table><tr><th>Provider</th><th>Ready</th><th class="num">This month USD</th><th class="num">Calls</th><th>Provider limit</th></tr>
+{% for pid, pname in providers.items() %}{% set m = month.get(pid, {}) %}<tr><td>{{pname}}{% if pid == llm.provider %} <span class="pill on">in use</span>{% endif %}</td>
+<td>{% if ready[pid] %}<span class="pill on">yes</span>{% else %}<span class="pill hard">key missing</span>{% endif %}</td>
+<td class="num">{{ "%.2f"|format(m.usd or 0) }}</td><td class="num">{{ m.calls or 0 }}</td>
+<td class="small">{% if pid == 'openai' %}{% set l = limits.get('openai') %}{% if l %}Requests left this minute: {{l.remaining_requests or '?'}} of {{l.limit_requests or '?'}}; tokens left: {{l.remaining_tokens or '?'}} of {{l.limit_tokens or '?'}} (as of {{l.at|ist}}, {{l.model}}). Credit balance: see platform.openai.com → Usage.{% else %}Shown after the first OpenAI call.{% endif %}
+{% elif pid == 'subscription' %}Your Claude plan's usage limits; check claude.ai → Settings → Usage. The cost shown is Claude Code's notional figure.
+{% else %}Billed on the GCP bill, inside the ₹{{ "%.0f"|format(settings.monthly_budget_inr) }} budget (see Costs).{% endif %}</td></tr>{% endfor %}
+</table></div></div>
+<h2>Model</h2>
 <div class="card"><form method="post" action="/settings">
 <h3>Provider</h3>
-<label><input type="radio" name="provider" value="subscription" {{'checked' if llm.provider=='subscription'}}> <strong>Claude subscription</strong> (default). Runs Claude Code headless with your plan's token; no GCP charge, counts against your plan's usage limits.
-{% if not token_set %}<span class="small" style="color:var(--bad)"> Token not set up on this service yet.</span>{% endif %}</label><br>
-<label><input type="radio" name="provider" value="vertex" {{'checked' if llm.provider=='vertex'}}> <strong>Vertex AI</strong>. Claude via your GCP project, billed per token on the GCP bill (counts toward the ₹{{ "%.0f"|format(settings.monthly_budget_inr) }} budget).</label>
-<h3>Model</h3><select name="model">{% for m in models %}<option value="{{m}}" {{'selected' if m==llm.model}}>{{m}} (${{prices[m][0]}} in / ${{prices[m][1]}} out per M tokens)</option>{% endfor %}</select>
-<h3>Effort</h3><select name="effort">{% for e in ["low","medium","high","xhigh","max"] %}<option {{'selected' if e==llm.effort}}>{{e}}</option>{% endfor %}</select>
+<label><input type="radio" name="provider" value="subscription" {{'checked' if llm.provider=='subscription'}}> <strong>Claude subscription</strong> (default). Claude Code headless with your plan's token; no GCP charge.</label><br>
+<label><input type="radio" name="provider" value="vertex" {{'checked' if llm.provider=='vertex'}}> <strong>Vertex AI</strong>. Claude via your GCP project, billed per token on the GCP bill.</label><br>
+<label><input type="radio" name="provider" value="openai" {{'checked' if llm.provider=='openai'}}> <strong>OpenAI API</strong>. Billed per token by OpenAI to the account whose key is stored in Secret Manager (mb-openai-api-key).</label>
+<h3>Claude model <span class="small">(subscription and Vertex)</span></h3><select name="model">{% for m in models %}<option value="{{m}}" {{'selected' if m==llm.model}}>{{m}} (${{prices[m][0]}} in / ${{prices[m][1]}} out per M tokens)</option>{% endfor %}</select>
+<h3>OpenAI model</h3><select name="openai_model">{% for m in openai_models %}<option value="{{m}}" {{'selected' if m==llm.model}}>{{m}}</option>{% endfor %}</select>
+or type another id: <input type="text" name="openai_model_custom" placeholder="model id" value="{{ llm.model if llm.provider=='openai' and llm.model not in openai_models else '' }}">
+<p class="small">OpenAI price per million tokens, used for the daily cap (check openai.com/api/pricing for the model you pick):
+input $<input type="number" name="openai_price_in" min="0" step="0.01" value="{{llm.openai_price_in}}" style="width:6em">
+output $<input type="number" name="openai_price_out" min="0" step="0.01" value="{{llm.openai_price_out}}" style="width:6em"></p>
+<h3>Effort</h3><select name="effort">{% for e in efforts %}<option {{'selected' if e==llm.effort}}>{{e}}</option>{% endfor %}</select>
 <span class="small">Higher effort thinks longer and costs more tokens.</span>
 <h3>Daily cap (USD)</h3><input type="number" name="daily_cap_usd" min="0" max="50" step="0.5" value="{{llm.daily_cap_usd}}">
-<p class="small">Agents stop calling the model for the day once this is reached. On Vertex it's real spend estimated from token counts; on the subscription it's the notional cost Claude Code reports, used to stop the agents eating your plan's allowance.</p>
+<p class="small">Agents stop calling the model for the day once this is reached, whichever provider is in use.</p>
 <button class="primary">Save</button></form></div>
-<h2>Today</h2>
-<div class="card"><p style="margin-top:0">${{ "%.2f"|format(spend.usd or 0) }} of ${{llm.daily_cap_usd}} across {{spend.calls or 0}} call(s).</p>
-{% if calls %}<div class="tablewrap"><table><tr><th>At (IST)</th><th>Agent</th><th>Provider</th><th>Model</th><th>USD</th></tr>
-{% for c in calls %}<tr><td>{{c.at|ist('%d %b %Y %H:%M:%S')}}</td><td>{{c.agent}}</td><td>{{c.provider}}</td><td>{{c.model}}</td><td class="num">{{ "%.3f"|format(c.usd or 0) }}</td></tr>{% endfor %}</table></div>{% endif %}</div>
+<h2>Recent calls</h2>
+<div class="card">{% if calls %}<div class="tablewrap"><table><tr><th>At (IST)</th><th>Agent</th><th>Provider</th><th>Model</th><th>USD</th></tr>
+{% for c in calls %}<tr><td>{{c.at|ist('%d %b %Y %H:%M:%S')}}</td><td>{{c.agent}}</td><td>{{c.provider}}</td><td>{{c.model}}</td><td class="num">{{ "%.3f"|format(c.usd or 0) }}</td></tr>{% endfor %}</table></div>{% else %}<p class="small" style="margin:0">No model calls yet.</p>{% endif %}</div>
 {% endblock %}
