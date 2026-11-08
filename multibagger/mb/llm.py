@@ -102,16 +102,27 @@ def extract_json(text: str):
 
 
 def _via_cli(system: str, prompt: str, model: str, effort: str, timeout: int) -> tuple[str, float]:
-    if not os.getenv("CLAUDE_CODE_OAUTH_TOKEN"):
+    token = os.getenv("CLAUDE_CODE_OAUTH_TOKEN", "").strip()
+    if token and (len(token) < 40 or not token.startswith("sk-ant-")):
+        raise LLMError(f"CLAUDE_CODE_OAUTH_TOKEN doesn't look like a token ({len(token)} characters): store a new "
+                       "`claude setup-token` value in Secret Manager (mb-claude-oauth-token)")
+    if not token:
         raise LLMError("CLAUDE_CODE_OAUTH_TOKEN is not set: store the `claude setup-token` value in Secret "
                        "Manager (mb-claude-oauth-token) and redeploy, or switch the provider to Vertex in Settings")
     # No tools: a single text-in, JSON-out completion, nothing on disk or the network is touched.
     cmd = ["claude", "-p", "--output-format", "json", "--model", model, "--effort", effort, "--tools", "",
            "--no-session-persistence", "--append-system-prompt", system]
     proc = subprocess.run(cmd, input=prompt, capture_output=True, text=True, timeout=timeout)
-    if proc.returncode != 0:
-        raise LLMError(f"claude CLI exited {proc.returncode}: {(proc.stderr or proc.stdout)[-500:]}")
-    out = json.loads(proc.stdout)
+    try:
+        out = json.loads(proc.stdout)
+    except ValueError:
+        out = None
+    if proc.returncode != 0 or out is None:
+        detail = (out or {}).get("result") if isinstance(out, dict) else None
+        status = (out or {}).get("api_error_status") if isinstance(out, dict) else None
+        raise LLMError(f"claude CLI exited {proc.returncode}"
+                       + (f" (API status {status})" if status else "")
+                       + f": {detail or (proc.stderr or proc.stdout)[-500:]}")
     if out.get("is_error"):
         raise LLMError(f"claude CLI error: {str(out.get('result'))[:500]}")
     return out.get("result") or "", float(out.get("total_cost_usd") or 0.0)

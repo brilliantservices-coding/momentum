@@ -37,7 +37,7 @@ class FakeCLI:
 
 @pytest.fixture()
 def cli(monkeypatch):
-    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "test-token")
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "sk-ant-oat01-" + "x" * 90)
 
     def install(replies, cost=0.05):
         fake = FakeCLI(replies, cost)
@@ -67,6 +67,9 @@ def test_llm_errors(env, cli, monkeypatch):
     store, _ = env
     cli(["sorry, no json here"])
     with pytest.raises(llm.LLMError):
+        llm.complete_json("s", "p", store=store)
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "x")
+    with pytest.raises(llm.LLMError, match="1 characters"):
         llm.complete_json("s", "p", store=store)
     monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN")
     with pytest.raises(llm.LLMError, match="setup-token"):
