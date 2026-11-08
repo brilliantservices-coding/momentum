@@ -388,13 +388,24 @@ async def upload_announcements(file: UploadFile = File(...)):
 
 
 @app.get("/research", response_class=HTMLResponse)
-def research(request: Request):
+def research(request: Request, msg: str = ""):
     store = get_store()
     scores = sorted(store.list("scores"), key=lambda s: -(s.get("score") or 0))
     themes = sorted(store.list("themes"), key=lambda t: (not t.get("active"), -(t.get("total") or 0)))
     held = {h["id"] for h in store.list("holdings")}
     return render(request, "research.html", scores=scores, themes=themes, held=held,
-                  facts=len(store.list("facts")))
+                  facts=len(store.list("facts")), rescore=store.get("control", "rescore"), msg=msg)
+
+
+@app.post("/research/rescore")
+def research_rescore(request: Request):
+    """Recomputes every analysed stock's score under the current rules from its saved memo (no LLM calls)."""
+    from mb import rescore
+    out = rescore.run(get_store())
+    get_store().set("audit", f"{now_iso()}-rescore", {"at": now_iso(), "user": current_user(request),
+                                                     "action": "rescore", "rescored": out["rescored"]})
+    return back("/research", f"Recalculated {out['rescored']} scores with the current rules (no LLM calls); "
+                             f"{out['unchanged_inputs']} keep their analysis until their data changes")
 
 
 @app.get("/research/{symbol}", response_class=HTMLResponse)

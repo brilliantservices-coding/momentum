@@ -372,3 +372,28 @@ def test_min_rules_and_run_chain(env, cli, monkeypatch):
     assert analyst.run(store=store, log=LOG)["analysed"] == 0  # all redone once: nothing left
     assert set(first["scores"]) | set(second["scores"]) == {"A5", "B6", "D7"}
     assert not set(first["scores"]) & set(second["scores"])
+
+
+def test_rescore_old_memos_without_llm(env, cli):
+    from fastapi.testclient import TestClient
+
+    from mb import inputs, rescore
+    from mb.agents import analyst
+    from mb.agents._context import company_record
+    from portal.app import app
+    store, blob = env
+    _seed_watchlist(store, blob)
+    fam = {k: {"points": v["points"], "evidence": v["evidence"]} for k, v in FAMILIES.items()}
+    fam["management"] = {"points": 4, "evidence": ["general knowledge: no concall data, unknown"]}
+    fam["ecosystem"] = {"points": 2, "evidence": []}
+    rec = company_record(store, "ALPHA")
+    store.set("memos", "ALPHA", {"symbol": "ALPHA", "families": fam})
+    store.set("scores", "ALPHA", {"score": 40.0, "tier": "Reject", "analysed": "2026-11-08",
+                                  "inputs_hash": inputs.digest(rec, [], rescore.PROMPT_BEFORE_REVISION)})
+    r = TestClient(app).post("/research/rescore", follow_redirects=False)
+    assert "Recalculated%201" in r.headers["location"]
+    s = store.get("scores", "ALPHA")
+    assert s["unverified"] == ["ecosystem", "management"] and s["families"]["management"] == 10
+    assert s["score_before_rescore"] == 40.0 and s["score"] > 40 and s["tier"] == "C"  # 2 unverified cap at C
+    fake = cli([{}])
+    assert analyst.run(store=store, log=LOG)["analysed"] == 0 and not fake.calls  # no LLM re-run needed
