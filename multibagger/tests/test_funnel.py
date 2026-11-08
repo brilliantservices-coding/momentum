@@ -61,3 +61,16 @@ def test_stock_links_to_yahoo():
     assert 'href="https://finance.yahoo.com/quote/ALPHA.NS/"' in stock_link("ALPHA", "Alpha <Ltd>")
     assert "Alpha &lt;Ltd&gt;" in stock_link("ALPHA", "Alpha <Ltd>")
     assert "522101.BO" in stock_link("522101")
+
+
+def test_stale_running_runs_show_stopped(env):
+    from fastapi.testclient import TestClient
+
+    from portal.app import app
+    store, _ = env
+    store.set("runs", "old-1", {"agent": "universe", "status": "running", "started": "2026-01-01T00:00:00+00:00"})
+    store.set("agents", "universe", {"last_status": "running", "last_started": "2026-01-01T00:00:00+00:00"})
+    c = TestClient(app)
+    page = c.get("/agents/universe").text
+    assert "stopped" in page and ">running<" not in page
+    assert "stopped" in c.get("/").text

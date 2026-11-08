@@ -65,6 +65,9 @@ def stop(agent_id: str) -> int:
         client = run_v2.ExecutionsClient()
         for n in names:
             client.cancel_execution(name=n)
+            run_id = n.rsplit("/", 1)[-1]
+            if get_store().get("runs", run_id):
+                get_store().set("runs", run_id, {"status": "cancelled", "finished": now_iso()}, merge=True)
     if names:
         get_store().set("agents", agent_id, {"last_status": "cancelled", "last_finished": now_iso()}, merge=True)
     return len(names)
