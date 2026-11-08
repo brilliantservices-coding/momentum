@@ -115,7 +115,36 @@ def metrics(info: dict, income, balance, cashflow, quarterly=None) -> dict:
         "avg_traded_value_cr": (vol * price / CR) if vol and price else None,
         "volume_1m_avg": vol,
     }
+    rec.update(change_variables(rev, ebitda, ebit, ta, cl))
     return {k: (round(v, 4) if isinstance(v, float) else v) for k, v in rec.items()}
+
+
+def change_variables(rev: list, ebitda: list, ebit: list, ta: list, cl: list) -> dict:
+    """Strategy v2 change variables from annual statements (newest first). Static quality is not enough:
+    what matters is whether growth, margins and returns on new capital are improving."""
+    def growth(i):
+        a, b = _at(rev, i), _at(rev, i + 1)
+        return None if a is None or not b or b <= 0 else 100 * (a / b - 1)
+
+    def margin(i):
+        e, r = _at(ebitda, i), _at(rev, i)
+        return None if e is None or not r or r <= 0 else 100 * e / r
+
+    def cap(i):
+        a, c = _at(ta, i), _at(cl, i)
+        return None if a is None or c is None else a - c
+
+    g0, g1, m0, m1 = growth(0), growth(1), margin(0), margin(1)
+    c0, c1, e0, e1 = cap(0), cap(1), _at(ebit, 0), _at(ebit, 1)
+    inc_roce = None
+    if None not in (c0, c1, e0, e1) and c0 > 0:
+        floor = max(abs(c0) * 0.02, 1.0)  # avoids dividing by a near-zero change in capital
+        inc_roce = 100 * 0.75 * (e0 - e1) / max(c0 - c1, floor)  # NOPAT at an assumed 25% tax
+    s2c = lambda i: None if cap(i) in (None, 0) or _at(rev, i) is None else _at(rev, i) / cap(i)  # noqa: E731
+    return {"revenue_growth_1y": g0, "revenue_acceleration": None if g0 is None or g1 is None else g0 - g1,
+            "ebitda_margin": m0, "margin_delta": None if m0 is None or m1 is None else m0 - m1,
+            "incremental_roce": inc_roce,
+            "sales_to_capital_delta": None if s2c(0) is None or s2c(1) is None else s2c(0) - s2c(1)}
 
 
 def info_fields(info: dict) -> dict:

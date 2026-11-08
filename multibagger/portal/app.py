@@ -74,8 +74,10 @@ async def guard(request: Request, call_next):
 
 def render(request: Request, name: str, **ctx):
     store = get_store()
+    from mb.playbooks import PLAYBOOKS
+    from mb.scoring import BIS_WEIGHTS
     ctx.update(request=request, user=current_user(request), kill=store.get("control", "global") or {},
-               nav=request.url.path, settings=settings)
+               nav=request.url.path, settings=settings, playbooks=PLAYBOOKS, bis_weights=BIS_WEIGHTS)
     return templates.TemplateResponse(request, name, ctx)
 
 
@@ -126,7 +128,7 @@ def _funnel():
     held = {h["id"] for h in store.list("holdings")}
     stage_names = ["Screened (fundamentals loaded)", "Market cap and liquidity gates", "Enough data (4+ rules known)",
                    "Pass 1 rules met (70%+ of known)", "No open hard red flag: watchlist", "Analysed by the AI analyst",
-                   "Conviction 52+ (tier A, B or C)", "Cleared the red team", "Proposed for purchase",
+                   "Conviction 52+ (tier A, B or C after the v2 gates)", "Cleared the red team", "Proposed for purchase",
                    "Approved by you / held"]
     rows = []
     for c in cands:
@@ -264,7 +266,8 @@ def funnel(request: Request, stage: int = 0, q: str = ""):
 def candidates(request: Request, all: int = 0):
     store = get_store()
     where = [] if all else [("passed", "==", True)]
-    rows = store.list("candidates", where=where, order_by="met", limit=500)
+    from mb.agents._context import strength
+    rows = sorted(store.list("candidates", where=where, order_by="met", limit=500), key=strength)
     alerts = {}
     for a in store.list("alerts", where=[("status", "==", "open")]):
         alerts.setdefault(a.get("symbol"), []).append(a)

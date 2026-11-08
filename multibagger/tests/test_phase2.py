@@ -99,6 +99,12 @@ def _seed_watchlist(store, blob):
 FAMILIES = {k: {"points": v, "evidence": [f"fund:{k}"]} for k, v in
             {"theme": 13, "financial": 18, "management": 16, "visibility": 12, "ecosystem": 8, "valuation": 8,
              "governance": 9}.items()}
+# Strategy v2 evidence that clears the tier-A gates.
+V2 = {"evidence_confidence": "High", "valuation": {"current_price": 100, "base_3y": 300},
+      "sector_signals": [{"signal": "orders", "status": "CONFIRMED", "source_grade": "P1", "source_group": "results"},
+                         {"signal": "capacity", "status": "CONFIRMED", "source_grade": "P2", "source_group": "concall"},
+                         {"signal": "utilisation", "status": "CONFIRMED", "source_grade": "P1",
+                          "source_group": "results"}]}
 
 
 def test_research_pipeline(env, cli):
@@ -122,7 +128,7 @@ def test_research_pipeline(env, cli):
     assert (out["filings"], out["facts"], out["more_to_do"]) == (1, 1, False)
     assert extraction.run(store=store, log=LOG)["filings"] == 0  # marked extracted
 
-    cli([{"archetype": "Small leader in a large, growing market", "summary": "s", "families": FAMILIES,
+    cli([{**V2, "archetype": "Small leader in a large, growing market", "summary": "s", "families": FAMILIES,
           "drivers": [{"driver": "d", "proof_metric": "m"}], "key_risks": ["r"], "kill_criteria": ["k"]}])
     out = analyst.run(store=store, log=LOG)
     s = store.get("scores", "ALPHA")
@@ -272,7 +278,7 @@ def test_research_agents_skip_unchanged_inputs(env, cli, monkeypatch):
     theme.run(store=store, log=LOG)
     assert theme.run(store=store, log=LOG)["unchanged_skipped"] and len(fake.calls) == 1
 
-    fake = cli([{"summary": "s", "families": FAMILIES}])
+    fake = cli([{**V2, "summary": "s", "families": FAMILIES}])
     assert analyst.run(store=store, log=LOG)["analysed"] == 1
     again = analyst.run(store=store, log=LOG)
     assert again["analysed"] == 0 and again["unchanged_skipped"] == 1 and len(fake.calls) == 1

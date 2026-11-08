@@ -1,13 +1,14 @@
 {% extends "base.html" %}{% block body %}
-<h1>Research</h1><p class="sub">Conviction scores from the company analyst (after the red-team review for tier A and B), and the theme map. {{facts}} extracted facts on file.</p>
+<h1>Research</h1><p class="sub">Conviction scores from the company analyst (after the red-team review for tier A and B), and the theme map. Tiers: A 75+ with High evidence confidence, sector convergence, 5+ strong families and a 2.5x base case; B 62+ with at least Moderate confidence; C 52+; Research 50-51 (no capital); Reject below 50. {{facts}} extracted facts on file.</p>
 <h2>Conviction scores</h2>
 {% if scores %}<form method="post" action="/research/rescore" class="row"><button title="Uses each memo's saved points and evidence; no LLM calls">Recalculate scores with current rules</button>
 <span class="small">{% if rescore %}Last recalculated {{rescore.at|ist}} ({{rescore.rescored}} stocks).{% else %}Scoring rules were revised on 8 Nov; existing scores still use the old rules.{% endif %}</span></form>{% endif %}
-{% if scores %}<div class="tablewrap"><table><tr><th>Company</th><th>Score</th><th>Tier</th><th>Archetype</th><th>Red team</th><th>Analysed</th></tr>
+{% if scores %}<div class="tablewrap"><table><tr><th>Company</th><th>Score</th><th>Tier</th><th>Evidence</th><th>BIS</th><th>Playbook / archetype</th><th>Red team</th><th>Analysed</th></tr>
 {% for s in scores %}<tr><td><a href="/research/{{s.id}}"><strong>{{s.id}}</strong></a>{% if s.id in held %} <span class="pill on">held</span>{% endif %}<br><span class="small">{{ stock_link(s.id, s.name) }}</span></td>
 <td class="num">{{s.score}}{% if s.previous_score is not none and s.previous_score != s.score %} <span class="small">(was {{s.previous_score}})</span>{% endif %}</td>
 <td><span class="pill {{'on' if s.tier in ('A','B') else 'off' if s.tier=='Reject' else ''}}">{{s.tier}}</span></td>
-<td class="small">{{s.archetype or ''}}</td>
+<td class="small">{{s.evidence_confidence or '–'}}</td><td class="num">{{s.bis if s.bis is not none else '–'}}</td>
+<td class="small">{% if s.playbook %}{{playbooks.get(s.playbook, {}).get('name', s.playbook)}}<br>{% endif %}{{s.archetype or ''}}</td>
 <td class="small">{% if s.redteam_needed %}waiting{% elif s.redteamed %}<a href="/research/{{s.id}}#redteam">{{ '%+.1f'|format(s.redteam_adjustment or 0) }}</a>{% else %}–{% endif %}</td>
 <td class="small">{{s.analysed|ist('%d %b %Y')}}</td></tr>{% endfor %}</table></div>
 {% else %}<div class="card empty">No scores yet. Run the Company analyst from the <a href="/">Overview</a> once the watchlist has survivors.</div>{% endif %}

@@ -27,7 +27,8 @@ Filings:
 {filings}
 
 Return {{"facts": [{{"filing_id": "...", "symbol": "...", "type": "...", "statement": "one sentence",
-"metric": "...", "value": "...", "period": "...", "page": n or null, "material": true|false}}]}}"""
+"metric": "...", "value": "...", "unit": "...", "period": "...", "period_start": "YYYY-MM-DD or null",
+"period_end": "YYYY-MM-DD or null", "page": n or null, "material": true|false}}]}}"""
 
 
 def _pdf_text(url: str) -> tuple[str | None, str]:
@@ -58,9 +59,15 @@ def _extract(store, pending: list[dict]) -> int:
                             store=store)
     stamp, facts = now_iso(), {}
     ids = {b["filing_id"] for b in batch}
+    by_id = {f["id"]: f for f in pending}
     for i, x in enumerate(out.get("facts", [])):
         if x.get("filing_id") in ids:
-            facts[f"{x['filing_id']}-{i}"] = {**x, "extracted": stamp}
+            src = by_id[x["filing_id"]]
+            facts[f"{x['filing_id']}-{i}"] = {
+                **x, "extracted": stamp, "source_type": "exchange filing", "source_grade": "P1",
+                "published": src.get("date"), "source_url": src.get("attachment"),
+                "verification_status": "extracted", "human_verified": False,
+                "point_in_time_valid": True, "extraction_model_version": llm.get_settings(store).get("model")}
     store.set_many("facts", facts)
     store.set_many("filings", {f["id"]: {"extracted": stamp} for f in pending}, merge=True)
     return len(facts)

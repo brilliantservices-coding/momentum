@@ -12,7 +12,11 @@ research system. A human reviews everything you write and places any trades them
 Rules: use only the evidence provided plus widely known public facts; never invent numbers. Every claim
 that moves a score must cite its source as one of: "fund:<field>", "filing:<id>", "fact:<id>",
 "theme:<id>" or "general knowledge". Prefer saying "unknown" over guessing. Tone (management
-optimism, TV interviews) may move management or visibility by at most 3 points."""
+optimism, TV interviews) may move management or visibility by at most 3 points.
+Source grades: P1 audited filing / exchange disclosure / regulator / government data; P2 concall or investor
+presentation; P3 rating agency or contemporaneous institutional research; P4 customer/supplier publication or
+trade body; P5 reputable media or interview; P6 forum or social. P6 can raise a question but never earns
+points. The more extraordinary the reported performance, the more independent corroboration it needs."""
 
 
 def compact(obj, limit: int = 60000) -> str:
@@ -33,10 +37,15 @@ def company_record(store, symbol: str, max_filings: int = 60) -> dict:
     filings = store.list("filings", where=[("symbol", "==", symbol)], order_by="ingested", limit=max_filings)
     facts = store.list("facts", where=[("symbol", "==", symbol)], order_by="extracted", limit=80)
     alerts = store.list("alerts", where=[("symbol", "==", symbol)])
+    from ..playbooks import brief
+    cand = store.get("candidates", symbol) or {}
     return {
         "symbol": symbol,
         "fundamentals": {k: v for k, v in f.items() if v is not None and k not in ("id",)},
-        "screen": (store.get("candidates", symbol) or {}).get("rules"),
+        "screen": cand.get("rules"),
+        "playbook": brief(cand.get("playbook") or "general"),
+        "secondary_playbooks": cand.get("secondary_playbooks") or [],
+        "inflection_screen": {"candidate": cand.get("inflection_candidate"), "triggers": cand.get("trigger_events") or []},
         "red_flags": [{k: a.get(k) for k in ("rule", "severity", "detail", "status", "source")} for a in alerts],
         "filings": [{"id": x["id"], "date": x.get("date"), "category": x.get("category"),
                      "subject": (x.get("subject") or "")[:600]} for x in filings],
@@ -45,9 +54,13 @@ def company_record(store, symbol: str, max_filings: int = 60) -> dict:
 
 
 def strength(c: dict) -> tuple:
-    """Sort key for watchlist candidates: most Pass 1 rules met first, then fewest rules failed."""
+    """Sort key for watchlist candidates: highest research priority first (strategy v2: rules met, rules
+    failed and inflection signals), then most rules met."""
     met, known = c.get("met") or 0, c.get("known") or 0
-    return (-met, known - met, c.get("id") or "")
+    prio = c.get("research_priority")
+    if prio is None:
+        prio = 10 * met - 5 * (known - met)
+    return (-prio, -met, known - met, c.get("id") or "")
 
 
 def eligible(store) -> list[dict]:
