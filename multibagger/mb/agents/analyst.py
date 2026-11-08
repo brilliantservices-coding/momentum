@@ -12,7 +12,9 @@ from ..rules import WEIGHTS, conviction
 from ..store import now_iso
 from ._context import ARCHETYPES, GROUND_RULES, company_record, compact
 
-MAX_PER_RUN = int(os.getenv("MB_ANALYST_MAX", "5"))
+def per_run(store) -> int:
+    """Companies per run: Settings page value (default 10); MB_ANALYST_MAX on the job overrides it."""
+    return int(os.getenv("MB_ANALYST_MAX") or llm.get_settings(store).get("analyst_per_run") or 10)
 
 PROMPT = """Analyse {symbol} as a potential multibagger (20%+ earnings growth for 5+ years plus re-rating).
 
@@ -62,7 +64,7 @@ def run(store, log) -> dict:
         todo.append((prev.get("analysed", ""), sym, c, rec, key, price))
     # Never-analysed first, then oldest memo; within that, the strongest Pass 1 screens go first.
     todo.sort(key=lambda t: (t[0], -(t[2].get("met") or 0), (t[2].get("known") or 0) - (t[2].get("met") or 0), t[1]))
-    picked = todo[:MAX_PER_RUN]
+    picked = todo[:per_run(store)]
     results, errors = {}, {}
     for _, sym, c, rec, key, price in picked:
         try:

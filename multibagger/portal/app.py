@@ -148,7 +148,7 @@ def _funnel():
         elif reached < 5:
             why = "; ".join(pass1_reasons(c)) or "did not pass"
         else:
-            why = ["not analysed yet (analyst runs 5 names per run)", f"score {s and s.get('score')} below 50",
+            why = ["not analysed yet (the analyst takes the strongest screens first, a set number per run)", f"score {s and s.get('score')} below 50",
                    "waiting for the red team", "no ticket yet (portfolio agent)", "ticket awaiting your decision"][reached - 5]
         rows.append({**c, "reached": reached, "stage": stage_names[reached - 1], "why": why,
                      "score": s and s.get("score"), "tier": s and s.get("tier")})
@@ -430,16 +430,19 @@ def settings_page(request: Request, msg: str = ""):
 @app.post("/settings")
 def settings_save(request: Request, provider: str = Form(...), model: str = Form(""), openai_model: str = Form(""),
                   openai_model_custom: str = Form(""), effort: str = Form(...), daily_cap_usd: float = Form(...),
-                  openai_price_in: float = Form(2.5), openai_price_out: float = Form(15.0)):
+                  openai_price_in: float = Form(2.5), openai_price_out: float = Form(15.0),
+                  analyst_per_run: int = Form(10)):
     if provider == "openai":
         model = (openai_model_custom or openai_model).strip()
     if provider not in llm.PROVIDERS or not llm.valid_model(provider, model) or effort not in llm.EFFORTS or \
-            not 0 <= daily_cap_usd <= 50 or not (0 <= openai_price_in <= 500 and 0 <= openai_price_out <= 2000):
+            not 0 <= daily_cap_usd <= 50 or not (0 <= openai_price_in <= 500 and 0 <= openai_price_out <= 2000) or \
+            not 1 <= analyst_per_run <= 50:
         raise HTTPException(400)
     user = current_user(request)
     get_store().set("control", "llm", {"provider": provider, "model": model, "effort": effort,
                                        "daily_cap_usd": daily_cap_usd, "openai_price_in": openai_price_in,
-                                       "openai_price_out": openai_price_out, "updated": now_iso(), "by": user},
+                                       "openai_price_out": openai_price_out, "analyst_per_run": analyst_per_run,
+                                       "updated": now_iso(), "by": user},
                     merge=True)
     get_store().set("audit", f"{now_iso()}-llm-settings", {"at": now_iso(), "user": user, "action": "llm settings",
                                                           "provider": provider, "model": model})
