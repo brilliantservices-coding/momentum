@@ -10,7 +10,7 @@ import os
 
 from .. import llm, sources
 from ..store import now_iso
-from ._context import GROUND_RULES, compact
+from ._context import GROUND_RULES, compact, per_run, strength
 
 MAX_FILINGS = int(os.getenv("MB_EXTRACT_MAX_FILINGS", "25"))
 MAX_PDF_PAGES = int(os.getenv("MB_EXTRACT_MAX_PDF_PAGES", "40"))
@@ -44,9 +44,18 @@ def _pdf_text(url: str) -> tuple[str | None, str]:
 
 
 def run(store, log) -> dict:
-    watch = {c["id"] for c in store.list("candidates", where=[("passed", "==", True)])}
-    pending = [f for f in store.list("filings", order_by="ingested", limit=2000)
-               if f.get("symbol") in watch and not f.get("extracted")][:MAX_FILINGS]
+    """Extracts the unprocessed filings of the strongest watchlist stocks first: up to the Settings
+    "stocks per run" count of stocks, and at most MB_EXTRACT_MAX_FILINGS filings in one call."""
+    ranked = [c["id"] for c in sorted(store.list("candidates", where=[("passed", "==", True)]), key=strength)]
+    by_sym: dict[str, list] = {}
+    for f in store.list("filings", order_by="ingested", limit=2000):
+        if not f.get("extracted"):
+            by_sym.setdefault(f.get("symbol"), []).append(f)
+    pending, stocks = [], 0
+    for sym in ranked:
+        if sym in by_sym and stocks < per_run(store, "extraction") and len(pending) < MAX_FILINGS:
+            pending += by_sym[sym][:MAX_FILINGS - len(pending)]
+            stocks += 1
     if not pending:
         log.info("nothing to extract: no unprocessed filings for watchlist names")
         return {"filings": 0, "facts": 0}
