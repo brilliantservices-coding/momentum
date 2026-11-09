@@ -26,7 +26,7 @@ output $<input type="number" name="openai_price_out" min="0" step="0.01" value="
 <h3>Effort</h3><select name="effort">{% for e in efforts %}<option {{'selected' if e==llm.effort}}>{{e}}</option>{% endfor %}</select>
 <span class="small">Higher effort thinks longer and costs more tokens.</span>
 <h3>Daily cap (USD)</h3><input type="number" name="daily_cap_usd" min="0" max="50" step="0.5" value="{{llm.daily_cap_usd}}">
-<p class="small">Agents stop calling the model for the day once this is reached, whichever provider is in use. On the Claude subscription this is Claude's own cost estimate (about $0.33 per company on Opus), not a bill, but it still stops the agents.</p>
+<p class="small">Agents stop calling the model for the day once this is reached, whichever provider is in use. On the Claude subscription this is Claude's own cost estimate (about $0.33 per company on Opus; Fable 5.2 is roughly 2.5 times that, so raise the cap or lower the stocks per run if you pick it), not a bill, but it still stops the agents.</p>
 <h3>Stocks per run</h3>
 <p>Company analyst <input type="number" name="analyst_per_run" min="1" max="200" step="1" value="{{llm.analyst_per_run}}" style="width:5em">
 Extraction <input type="number" name="extraction_per_run" min="1" max="200" step="1" value="{{llm.extraction_per_run}}" style="width:5em">

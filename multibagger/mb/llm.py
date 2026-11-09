@@ -27,9 +27,10 @@ DEFAULTS = {"provider": "subscription", "model": "claude-opus-5-5", "effort": "m
             "daily_cap_usd": settings.daily_llm_cap_usd, "vertex_region": "global",
             "openai_price_in": 2.5, "openai_price_out": 15.0, "analyst_per_run": 50,
             "extraction_per_run": 50, "redteam_per_run": 50, "min_rules_met": 5}
-MODELS = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]
+MODELS = ["claude-fable-5-2", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]
 # USD per million tokens (input, output), first-party list prices used as an estimate.
-PRICES = {"claude-opus-5-5": (4.0, 20.0), "claude-sonnet-5-5": (2.0, 10.0), "claude-haiku-5-5": (0.10, 0.50)}
+# Fable 5.2 uses the Fable 5.1 list price as its estimate (same tier); the subscription reports its own cost.
+PRICES = {"claude-fable-5-2": (10.0, 50.0), "claude-opus-5-5": (4.0, 20.0), "claude-sonnet-5-5": (2.0, 10.0), "claude-haiku-5-5": (0.10, 0.50)}
 PROVIDERS = {"subscription": "Claude subscription", "vertex": "Vertex AI (Claude)", "openai": "OpenAI API"}
 # Shown when the portal can't list the account's models; any model id the account has can be typed in.
 OPENAI_MODELS = ["gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-luna", "gpt-5.5", "gpt-5.4-mini", "gpt-5.4-nano"]

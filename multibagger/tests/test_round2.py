@@ -181,3 +181,19 @@ def test_pages_after_analysis(env, cli):
         assert r.status_code == 200, url
     page = c.get("/stock/ALPHA").text
     assert "annual-report-FY26.pdf" in page and "tier" in page
+
+
+def test_fable_model_can_be_selected(env, cli):
+    from fastapi.testclient import TestClient
+
+    from mb import llm
+    from portal.app import app
+    store, _ = env
+    c = TestClient(app)
+    assert "claude-fable-5-2" in c.get("/settings").text
+    r = c.post("/settings", data={"provider": "subscription", "model": "claude-fable-5-2", "effort": "medium",
+                                  "daily_cap_usd": 20}, follow_redirects=False)
+    assert r.status_code == 303 and llm.get_settings(store)["model"] == "claude-fable-5-2"
+    fake = cli([{"ok": 1}])
+    llm.complete_json("s", "p", store=store)
+    assert "claude-fable-5-2" in fake.calls[0][0]
