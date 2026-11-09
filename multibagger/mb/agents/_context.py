@@ -37,15 +37,24 @@ def company_record(store, symbol: str, max_filings: int = 60) -> dict:
     filings = store.list("filings", where=[("symbol", "==", symbol)], order_by="ingested", limit=max_filings)
     facts = store.list("facts", where=[("symbol", "==", symbol)], order_by="extracted", limit=80)
     alerts = store.list("alerts", where=[("symbol", "==", symbol)])
-    from ..playbooks import brief
+    from ..playbooks import brief, critical_missing, weights_for
     cand = store.get("candidates", symbol) or {}
+    pb = cand.get("playbook") or "general"
+    docs = store.list("documents", where=[("symbol", "==", symbol)])
     return {
         "symbol": symbol,
         "fundamentals": {k: v for k, v in f.items() if v is not None and k not in ("id",)},
         "screen": cand.get("rules"),
-        "playbook": brief(cand.get("playbook") or "general"),
+        "playbook": brief(pb),
+        "family_weights": weights_for(pb),
         "secondary_playbooks": cand.get("secondary_playbooks") or [],
-        "inflection_screen": {"candidate": cand.get("inflection_candidate"), "triggers": cand.get("trigger_events") or []},
+        "screen_lane": cand.get("lane"),
+        "industry_percentiles": cand.get("peer_pct") or {},
+        "inflection_screen": {"candidate": cand.get("inflection_candidate"), "triggers": cand.get("trigger_events") or [],
+                              "signal_groups": cand.get("signal_groups") or [],
+                              "numbers_only_bis": cand.get("quant_bis"), "bis_parts": cand.get("quant_bis_parts")},
+        "sector_critical_data_missing": critical_missing(pb, f, [x.get("type") for x in facts]),
+        "documents_read": [{k: d.get(k) for k in ("file", "kind", "source_grade", "facts")} for d in docs],
         "red_flags": [{k: a.get(k) for k in ("rule", "severity", "detail", "status", "source")} for a in alerts],
         "filings": [{"id": x["id"], "date": x.get("date"), "category": x.get("category"),
                      "subject": (x.get("subject") or "")[:600]} for x in filings],
@@ -55,7 +64,8 @@ def company_record(store, symbol: str, max_filings: int = 60) -> dict:
 
 def strength(c: dict) -> tuple:
     """Sort key for watchlist candidates: highest research priority first (strategy v2: rules met, rules
-    failed and inflection signals), then most rules met."""
+    failed, the inflection lane, the numbers-only Business Inflection Score and filing triggers), then most
+    rules met."""
     met, known = c.get("met") or 0, c.get("known") or 0
     prio = c.get("research_priority")
     if prio is None:
@@ -63,12 +73,23 @@ def strength(c: dict) -> tuple:
     return (-prio, -met, known - met, c.get("id") or "")
 
 
+def qualified(c: dict, need: int) -> bool:
+    """Health-qualified for LLM work: on the watchlist (passed, no open hard flag) and either a Compounder
+    meeting the Settings "minimum Pass 1 rules met" (default 5 of 7) or an Inflection-lane stock, which has
+    passed its own health checks (no leverage or promoter failure, positive margin, pledge 20% or less)."""
+    if not c.get("passed"):
+        return False
+    lanes = c.get("lanes")
+    if lanes is None:  # screened before the two lanes existed
+        return (c.get("met") or 0) >= need
+    return bool(lanes.get("inflection")) or (bool(lanes.get("compounder")) and (c.get("met") or 0) >= need)
+
+
 def eligible(store) -> list[dict]:
-    """Watchlist stocks worth the research agents' time: passed the screen and met at least the Settings
-    "minimum Pass 1 rules met" (default 5 of 7), strongest first."""
+    """Watchlist stocks worth the research agents' (LLM) time, strongest first."""
     from .. import llm
     need = int(llm.get_settings(store).get("min_rules_met") or 5)
-    return sorted((c for c in store.list("candidates", where=[("passed", "==", True)]) if (c.get("met") or 0) >= need),
+    return sorted((c for c in store.list("candidates", where=[("passed", "==", True)]) if qualified(c, need)),
                   key=strength)
 
 

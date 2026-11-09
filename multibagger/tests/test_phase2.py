@@ -1,6 +1,4 @@
-import json
 import logging
-import subprocess
 
 import pytest
 
@@ -29,29 +27,6 @@ def test_conviction_rules():
     r = conviction({**full, "ecosystem": 2}, unverified=["management"])
     assert r["score"] == 87.0 and r["tier"] == "A"
     assert conviction(full, soft_flags=2)["score"] == 94.0  # 100 capped, then -3 per soft flag
-
-
-class FakeCLI:
-    def __init__(self, replies, cost=0.05):
-        self.replies, self.cost, self.calls = list(replies), cost, []
-
-    def __call__(self, cmd, input, capture_output, text, timeout):
-        self.calls.append((cmd, input))
-        reply = self.replies.pop(0) if len(self.replies) > 1 else self.replies[0]
-        out = {"type": "result", "is_error": False, "result": reply if isinstance(reply, str) else
-               "```json\n" + json.dumps(reply) + "\n```", "total_cost_usd": self.cost}
-        return subprocess.CompletedProcess(cmd, 0, json.dumps(out), "")
-
-
-@pytest.fixture()
-def cli(monkeypatch):
-    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "sk-ant-oat01-" + "x" * 90)
-
-    def install(replies, cost=0.05):
-        fake = FakeCLI(replies, cost)
-        monkeypatch.setattr(subprocess, "run", fake)
-        return fake
-    return install
 
 
 def test_llm_subscription_and_cap(env, cli):

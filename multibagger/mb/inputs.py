@@ -60,3 +60,9 @@ def price_moved(old, new) -> bool:
         return abs(float(new) / float(old) - 1) >= PRICE_MOVE
     except (TypeError, ValueError, ZeroDivisionError):
         return False
+
+
+def only_symbols() -> set[str]:
+    """MB_SYMBOLS (comma separated): a per-stock run requested on the portal's stock page. The agent
+    handles just these stocks, redoes them even if unchanged, and starts no follow-up run."""
+    return {s.strip().upper() for s in (os.getenv("MB_SYMBOLS") or "").split(",") if s.strip()}

@@ -5,8 +5,7 @@ red-flag overrides and tier are computed here by the strategy's rules, not by th
 """
 from __future__ import annotations
 
-from .. import inputs, llm
-from ..rules import WEIGHTS
+from .. import inputs, llm, requests
 from ..scoring import score_memo
 from ..playbooks import VERSION as PLAYBOOK_VERSION
 from ..store import now_iso
@@ -25,18 +24,23 @@ Score each of its critical signals; for lenders do not use cash conversion or ne
 growth, asset quality, credit cost, capital adequacy, ROA); for cyclicals normalise peak margins and returns
 before awarding financial or valuation points.
 
-Signal families and their maximum points: {weights}. Score each family linearly from 0 to its weight.
+Signal families and their maximum points for this playbook: {weights}. Score each family linearly from 0 to
+its weight (the weights differ by sector: e.g. order-book businesses weigh visibility, lenders governance).
 - theme: structural runway, penetration, capital-cycle stage, theme valuation (active theme 24+/30 = full).
-- financial (20): 12 for sector-adjusted quality, balance sheet and cash economics + 8 from the Business
-  Inflection Score economics (incremental returns, margins, asset turns).
+- financial: 60% of its weight for sector-adjusted quality, balance sheet and cash economics + 40% from the
+  Business Inflection Score economics (incremental returns, margins, asset turns, reinvestment runway).
 - management: guidance accuracy, capital allocation, execution, alignment.
-- visibility (15): 9 for the playbook's leading indicators + 6 for leading signals already converting into
-  reported revenue and earnings.
+- visibility: 60% of its weight for the playbook's leading indicators + 40% for leading signals already
+  converting into reported revenue and earnings.
 - ecosystem: independent customer/supplier/regulator/trade corroboration (not the company's own words).
 - valuation: scenario returns on normalised earnings; full marks needs a base-case 3-year value 2.5x+.
 - governance: universal and sector-specific forensic checks.
-The record has fundamentals, the screen with change variables, red flags, filing headlines and extracted
-facts (no concall transcripts or annual reports). A family with no usable evidence at all: set
+The record has fundamentals (including annual and quarterly change variables and reinvestment: reinvestment
+rate, capex, CWIP to net block, growth funded at the incremental return), the screen lane, the stock's
+percentiles within its industry, a numbers-only BIS, positive filing triggers, red flags, filing headlines and
+extracted facts (from filings, and from annual reports, presentations and concall transcripts where
+documents_read lists them). Judge financial quality against the industry percentiles, not fixed bars. Items
+in sector_critical_data_missing lower evidence confidence and belong in open_questions. A family with no usable evidence at all: set
 "unverified": true (it gets half its weight and never counts as strong) instead of guessing. Weak or negative
 evidence is not the same as no evidence: score it low. An unknown but critical fact lowers evidence
 confidence; it is not a negative fact. Do not count correlated evidence twice (a presentation and an
@@ -90,7 +94,12 @@ def run(store, log) -> dict:
     Inputs are the company record (fundamentals, screen, red flags, filings, facts), the active themes
     and this prompt. Unchanged names are skipped; a price move of 15%+ since the memo counts as a change.
     """
+    only = inputs.only_symbols()
+    asked = only or set(requests.queued(store, "analyst"))
     cands = eligible(store)
+    if asked:  # stocks requested on the stock page: first, even if unchanged or not health-qualified
+        known = {c["id"]: c for c in store.list("candidates") if c["id"] in asked}
+        cands = [known.get(s) or {"id": s} for s in sorted(asked)] + ([] if only else [c for c in cands if c["id"] not in asked])
     scores = {s["id"]: s for s in store.list("scores")}
     themes = [{"id": t["id"], "name": t.get("name"), "total": t.get("total")}
               for t in store.list("themes", where=[("active", "==", True)])]
@@ -100,14 +109,14 @@ def run(store, log) -> dict:
         rec = company_record(store, sym)
         key = inputs.digest(rec, themes, PROMPT)
         price = rec["fundamentals"].get("price")
-        if (prev and not inputs.redo_due(prev.get("analysed")) and prev.get("inputs_hash") == key
+        if (sym not in asked and prev and not inputs.redo_due(prev.get("analysed")) and prev.get("inputs_hash") == key
                 and not inputs.price_moved(prev.get("price_at_analysis"), price)):
             unchanged += 1
             continue
         todo.append((prev.get("analysed", ""), sym, c, rec, key, price))
     # Never-analysed first, then oldest memo; within that, the strongest Pass 1 screens go first.
-    todo.sort(key=lambda t: (t[0], strength(t[2])))
-    picked = todo[:per_run(store, "analyst")]
+    todo.sort(key=lambda t: (t[1] not in asked, t[0], strength(t[2])))
+    picked = todo[:max(per_run(store, "analyst"), len(asked))]
     results, errors = {}, {}
     stopped = None
     for _, sym, c, rec, key, price in picked:
@@ -118,7 +127,7 @@ def run(store, log) -> dict:
         prev_memo = store.get("memos", sym) or {}
         try:
             out = llm.complete_json(GROUND_RULES, PROMPT.format(
-                symbol=sym, weights=WEIGHTS, archetypes="; ".join(ARCHETYPES), themes=themes or "(none scored yet)",
+                symbol=sym, weights=rec["family_weights"], archetypes="; ".join(ARCHETYPES), themes=themes or "(none scored yet)",
                 playbook=compact(rec.get("playbook"), 3000),
                 previous_tracker=compact(prev_memo.get("inflection_tracker") or [], 6000) or "[]",
                 record=compact(rec)), agent="analyst", store=store)
@@ -130,7 +139,7 @@ def run(store, log) -> dict:
             errors[sym] = str(exc)[:300]
             log.error("%s: %s", sym, exc)
             continue
-        v2 = score_memo(out, rec["red_flags"], prev_memo, price)
+        v2 = score_memo(out, rec["red_flags"], prev_memo, price, weights=rec["family_weights"])
         score = v2["score"]
         stamp = now_iso()
         prev = store.get("scores", sym) or {}
@@ -150,9 +159,10 @@ def run(store, log) -> dict:
         store.set("memos", sym, memo)
         store.set("memo_history", f"{sym}-{stamp}", memo)
         results[sym] = f"{score['score']} ({score['tier']})"
+        requests.finish(store, "analyst", [sym], results[sym])
         log.info("%s: %s tier %s", sym, score["score"], score["tier"])
     left = max(0, len(todo) - len(results) - len(errors))
     return {"analysed": len(results), "scores": results, "errors": errors, "eligible": len(cands),
             "unchanged_skipped": unchanged, "still_to_do": left, "stopped_by": stopped,
-            "more_to_do": bool(left and results and stopped != "daily cap"),
+            "more_to_do": bool(left and results and stopped != "daily cap" and not only),
             "remaining_unanalysed": max(0, sum(1 for c in cands if c["id"] not in scores) - len(results))}

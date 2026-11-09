@@ -127,6 +127,46 @@ it on the Data page. Duplicates are skipped. The Data page shows the latest fili
   across the whole chain (`MB_REDO_SINCE`).
 - To redo everything once anyway, use **Run now, redo all** on the agent page (sets `MB_REDO=1`).
 
+### Strategy v2 screening: two lanes, industry percentiles, sector weights
+
+- **Two lanes.** A stock reaches the watchlist through the **Compounder** lane (most of the seven quality rules,
+  as before) or the **Inflection** lane: change signals from two different groups (demand, margin, returns on
+  new capital, positive filing events) plus health checks (no leverage or promoter failure, positive operating
+  margin, pledge 20% or less). `mb/rules.py` `pass1()`.
+- **Industry-relative rules.** The screener ranks ROCE, growth, margins and cash conversion within each
+  industry (`mb/peers.py`; sector, then everyone, when an industry has fewer than 8 companies). Top-quartile
+  growth or top-30% ROCE / cash conversion passes even below the fixed bar.
+- **Sector weights.** Conviction family weights depend on the playbook (`mb/playbooks.py` `WEIGHT_PROFILES`;
+  each sums to 100). The Research page's "Recalculate scores" rescales old memos to them without LLM calls.
+- **Sector-critical data** (`CRITICAL_DATA`) lists what each playbook needs (e.g. GNPA for lenders, order book
+  for capital goods); missing items show on the stock page and lower evidence confidence.
+- **Research priority** = rules met − rules failed + Inflection lane + half the numbers-only inflection score +
+  filing triggers (+ 0.3 × the analyst's BIS once analysed). It orders every AI agent's queue.
+- **Who gets AI time.** Extraction, analyst and red team only take health-qualified watchlist stocks: Compounders
+  meeting the Settings minimum rules, and Inflection-lane stocks.
+- **Positive filing triggers.** The forensic agent tags order wins, capacity commissioning, rating upgrades,
+  approvals, promoter buying and QIPs in announcements (`triggers/`); the screener counts the last 180 days.
+- **Change variables.** Yahoo (annual and quarterly statements, reinvestment rate, CWIP / net block) and the
+  Trendlyne columns (quarterly margin vs 4 quarters ago, TTM revenue and operating profit vs a year ago, total
+  assets, industry/sector revenue growth). When `yahoo.metrics()` gains fields, bump `STMT_FIELDS` in
+  `mb/agents/fundamentals.py`: every in-range stock then gets one full fetch on the next run.
+
+### Company documents (annual reports, presentations, concall transcripts)
+
+The screener writes `docs/wanted.json` to the bucket: the top 50 qualified stocks, with the documents already
+on file. The desktop task downloads, for each, the latest annual report, investor presentation and concall
+transcript into `gs://mb-<project>-raw/inbox/docs/<SYMBOL>/` named `<type>-<period>.pdf`, where the type is one
+of `annual-report`, `presentation`, `concall`, `results`, `rating` (e.g. `concall-Q2FY27.pdf`). The extraction
+agent reads each once (up to 150 pages / 180k characters, one model call), saves the facts (annual reports and
+results P1, presentations and transcripts P2) and moves the file to `docs/<SYMBOL>/`.
+
+### Per-stock stages
+
+Every stock has a page at `/stock/<SYMBOL>` (click a symbol on the Watchlist or Funnel): each stage, what is
+done and what is left, and a Run button per stage. A run there handles that stock only, even if unchanged or
+not health-qualified (MB_SYMBOLS); if the agent is busy, the request waits in `requests/` and goes first in its
+next run, and a run that ends with requests waiting starts a run for just those.
+
 ## Running things by hand
 
 ```bash

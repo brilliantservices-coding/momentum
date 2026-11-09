@@ -27,6 +27,9 @@ ROWS = {
     "inventory": ["Inventory"],
     "shares": ["Ordinary Shares Number", "Share Issued"],
     "cwip": ["Construction In Progress"],
+    "net_ppe": ["Net PPE"],
+    "capex": ["Capital Expenditure", "Purchase Of PPE"],
+    "depreciation": ["Depreciation And Amortization", "Depreciation Amortization Depletion", "Reconciled Depreciation"],
 }
 
 
@@ -70,6 +73,8 @@ def metrics(info: dict, income, balance, cashflow, quarterly=None) -> dict:
     ta, cl = _row(balance, "total_assets"), _row(balance, "current_liabilities")
     debt, cash, eq = _row(balance, "debt"), _row(balance, "cash"), _row(balance, "equity")
     ar, inv, sh, cwip = _row(balance, "receivables"), _row(balance, "inventory"), _row(balance, "shares"), _row(balance, "cwip")
+    ppe, capex = _row(balance, "net_ppe"), _row(cashflow, "capex")
+    dep = _row(cashflow, "depreciation") or _row(income, "depreciation")
 
     def roce(i):
         e, a, c = _at(ebit, i), _at(ta, i), _at(cl, i)
@@ -116,6 +121,9 @@ def metrics(info: dict, income, balance, cashflow, quarterly=None) -> dict:
         "volume_1m_avg": vol,
     }
     rec.update(change_variables(rev, ebitda, ebit, ta, cl))
+    rec.update(reinvestment(ebit, capex, dep, ppe, cwip, rec.get("incremental_roce")))
+    if quarterly is not None:
+        rec.update(quarterly_changes(qrev, _row(quarterly, "ebitda"), rec.get("revenue_growth_1y")))
     return {k: (round(v, 4) if isinstance(v, float) else v) for k, v in rec.items()}
 
 
@@ -145,6 +153,37 @@ def change_variables(rev: list, ebitda: list, ebit: list, ta: list, cl: list) ->
             "ebitda_margin": m0, "margin_delta": None if m0 is None or m1 is None else m0 - m1,
             "incremental_roce": inc_roce,
             "sales_to_capital_delta": None if s2c(0) is None or s2c(1) is None else s2c(0) - s2c(1)}
+
+
+def reinvestment(ebit: list, capex: list, dep: list, ppe: list, cwip: list, inc_roce) -> dict:
+    """Strategy v2 reinvestment runway from the latest year: how much of operating profit goes back into
+    the business (net capex / NOPAT), capital work in progress against the existing asset base, and the
+    growth that reinvestment funds at the incremental return (reinvestment rate x incremental ROCE)."""
+    e, cx, d, p, w = _at(ebit, 0), _at(capex, 0), _at(dep, 0), _at(ppe, 0), _at(cwip, 0)
+    rate = None
+    if e is not None and e > 0 and cx is not None:
+        rate = 100 * (abs(cx) - abs(d or 0)) / (0.75 * e)
+        rate = max(-100.0, min(rate, 300.0))
+    funded = None
+    if rate is not None and inc_roce is not None:
+        funded = max(-50.0, min(rate / 100 * max(min(inc_roce, 100.0), -100.0), 100.0))
+    return {"reinvestment_rate": rate, "cwip_to_net_block": None if w is None or not p or p <= 0 else 100 * w / p,
+            "capex_cr": _cr(abs(cx)) if cx is not None else None, "reinvestment_growth": funded}
+
+
+def quarterly_changes(qrev: list, qebitda: list, growth_1y) -> dict:
+    """Latest quarter against the same quarter a year ago (Yahoo has 5-6 quarters): EBITDA margin change
+    and whether revenue growth is running ahead of the last full year (acceleration)."""
+    def m(i):
+        e, r = _at(qebitda, i), _at(qrev, i)
+        return None if e is None or not r or r <= 0 else 100 * e / r
+    m0, m4 = m(0), m(4)
+    yoy = None
+    if len(qrev) > 4 and qrev[0] and qrev[4] and qrev[4] > 0:
+        yoy = 100 * (qrev[0] / qrev[4] - 1)
+    return {"opm_qtr": m0, "opm_qtr_4q_ago": m4,
+            "qtr_margin_delta": None if m0 is None or m4 is None else m0 - m4,
+            "qtr_acceleration": None if yoy is None or growth_1y is None else yoy - growth_1y}
 
 
 def info_fields(info: dict) -> dict:

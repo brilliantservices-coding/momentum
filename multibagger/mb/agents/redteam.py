@@ -1,7 +1,7 @@
 """Red-team agent: argues the bear case for tier A/B names and anything held that is down 35%+."""
 from __future__ import annotations
 
-from .. import inputs, llm
+from .. import inputs, llm, requests
 from ..rules import tier_for
 from ..store import now_iso
 from ._context import GROUND_RULES, company_record, compact, per_run
@@ -39,12 +39,19 @@ Return {{"bear_case": "3-5 sentences", "closest_false_positive": "name and why",
 
 
 def run(store, log) -> dict:
+    only = inputs.only_symbols()
+    asked = only or set(requests.queued(store, "redteam"))
     todo = [s for s in store.list("scores", where=[("redteam_needed", "==", True)])]
+    if asked:  # requested on the stock page: first, even below tier B or unchanged
+        have = {s["id"] for s in todo}
+        todo = [s for s in store.list("scores") if s["id"] in asked and s["id"] not in have] + \
+            ([] if only else todo)
+        todo = [s for s in todo if not only or s["id"] in only]
     held = {h["id"] for h in store.list("holdings")}
     todo += [s for s in store.list("scores") if s["id"] in held and s.get("drawdown_pct", 0) <= -35
              and s not in todo]
     # Falling holdings first (risk to money already in), then the highest scores.
-    todo.sort(key=lambda s: (s["id"] not in held, -(s.get("score") or 0)))
+    todo.sort(key=lambda s: (s["id"] not in asked, s["id"] not in held, -(s.get("score") or 0)))
     limit, reviewed = per_run(store, "redteam"), 0
     done, unchanged, stopped = {}, 0, None
     for s in todo:
@@ -58,7 +65,7 @@ def run(store, log) -> dict:
         rec = company_record(store, sym)
         key = inputs.digest(memo, rec, s.get("analysed"), PROMPT)
         prev = store.get("redteam", sym) or {}
-        if prev.get("inputs_hash") == key and not inputs.redo_due(prev.get("written")):
+        if sym not in asked and prev.get("inputs_hash") == key and not inputs.redo_due(prev.get("written")):
             # Same memo and evidence as last review: keep that verdict instead of asking again.
             if s.get("redteam_needed"):
                 store.set("scores", sym, {"redteam_needed": False}, merge=True)
@@ -83,7 +90,8 @@ def run(store, log) -> dict:
         store.set("scores", sym, {"score": new, "tier": tier, "redteam_needed": False, "redteamed": stamp,
                                   "redteam_adjustment": new - float(s.get("score") or 0)}, merge=True)
         done[sym] = f"{s.get('score')} -> {new} ({tier})"
+        requests.finish(store, "redteam", [sym], done[sym])
         log.info("%s: %s", sym, done[sym])
     return {"reviewed": len(done), "changes": done, "unchanged_skipped": unchanged,
             "still_to_do": max(0, len(todo) - unchanged - reviewed), "stopped_by": stopped,
-            "more_to_do": bool(done and len(todo) - unchanged - reviewed > 0 and stopped != "daily cap")}
+            "more_to_do": bool(done and len(todo) - unchanged - reviewed > 0 and stopped != "daily cap" and not only)}

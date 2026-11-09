@@ -72,6 +72,17 @@ def run(agent_id: str, force: bool = False) -> dict:
     if status == "succeeded" and summary.get("more_to_do"):
         summary["next_run"] = _continue(store, agent_id, run_id)
         log.info("next run: %s", summary["next_run"])
+    from . import inputs, requests
+    only = inputs.only_symbols()
+    if only:  # whatever happened, this run was the answer to these requests: don't retry them forever
+        left = [x for x in requests.queued(store, agent_id) if x in only]
+        requests.finish(store, agent_id, left, summary.get("error") or str(summary.get("errors") or "") or
+                        f"run {status}{' (' + str(summary.get('stopped_by')) + ')' if summary.get('stopped_by') else ''}")
+    if status == "succeeded" and not summary.get("more_to_do") and summary.get("stopped_by") != "daily cap":
+        waiting = requests.queued(store, agent_id)
+        if waiting:  # stock-page requests that arrived while this run was busy: a run for just those
+            summary["next_run"] = _continue(store, agent_id, run_id, symbols=waiting)
+            log.info("requested stocks waiting (%s): %s", ", ".join(waiting), summary["next_run"])
     finished = now_iso()
     duration = round(time.monotonic() - t0, 1)
     store.set("runs", run_id, {"agent": agent_id, "status": status, "started": started, "finished": finished,
@@ -85,7 +96,7 @@ def run(agent_id: str, force: bool = False) -> dict:
 CHAIN_MAX = int(os.getenv("MB_CHAIN_MAX", "30"))
 
 
-def _continue(store, agent_id: str, run_id: str) -> str:
+def _continue(store, agent_id: str, run_id: str, symbols=None) -> str:
     """Starts the next run straight away when eligible stocks are left (at most CHAIN_MAX in a row).
     The kill switch, a Stop or the daily cap ends the chain; scheduled runs pick up from there."""
     depth = int(os.getenv("MB_CHAIN") or 0) + 1
@@ -97,6 +108,8 @@ def _continue(store, agent_id: str, run_id: str) -> str:
         return "not started: this run was stopped"
     from . import control
     env = {"MB_CHAIN": str(depth)}
+    if symbols:
+        env["MB_SYMBOLS"] = ",".join(symbols)
     if os.getenv("MB_REDO_SINCE"):
         env["MB_REDO_SINCE"] = os.environ["MB_REDO_SINCE"]
     try:

@@ -8,48 +8,127 @@ def _get(m, k):
     return m.get(k)
 
 
-def inflection(m: dict) -> dict:
-    """Strategy v2 change-variable screen: is the business entering an inflection (from annual statements)?"""
-    acc, md, inc = m.get("revenue_acceleration"), m.get("margin_delta"), m.get("incremental_roce")
-    s2c = m.get("sales_to_capital_delta")
-    signals = []
-    if acc is not None and acc >= 10:
-        signals.append(f"revenue growth accelerated {acc:+.0f} pts")
-    if md is not None and md >= 2:
-        signals.append(f"EBITDA margin up {md:+.1f} pts")
-    if inc is not None and inc >= 25:
-        signals.append(f"incremental ROCE {inc:.0f}%")
-    if s2c is not None and s2c >= 0.15:
-        signals.append(f"sales/capital up {s2c:+.2f}")
-    return {"inflection_candidate": len(signals) >= 2, "trigger_events": signals}
+# Change signals, grouped by what they measure: two signals from the same group (say annual and quarterly
+# margin) are one piece of evidence, so an inflection needs signals from two different groups.
+CHANGE_SIGNALS = [
+    ("demand", "revenue_acceleration", 10, "revenue growth accelerated {:+.0f} pts (annual)"),
+    ("demand", "qtr_acceleration", 10, "latest quarter growing {:+.0f} pts faster than last year"),
+    ("demand", "relative_growth_gap", 10, "growing {:+.0f} pts faster than its sector"),
+    ("demand", "ttm_acceleration", 10, "TTM revenue growth {:+.0f} pts above its 3-year CAGR"),
+    ("margin", "margin_delta", 2, "EBITDA margin up {:+.1f} pts (annual)"),
+    ("margin", "qtr_margin_delta", 2, "quarterly operating margin up {:+.1f} pts on a year ago"),
+    ("returns", "incremental_roce", 25, "incremental ROCE {:.0f}%"),
+    ("returns", "sales_to_capital_delta", 0.15, "sales/capital up {:+.2f}"),
+    ("returns", "reinvestment_growth", 15, "reinvestment funds {:.0f}% growth at current returns"),
+]
 
 
-def pass1(m: dict) -> dict:
-    """Returns {rule: True|False|None}, gates and an overall verdict for one company.
+def inflection(m: dict, triggers: list | None = None) -> dict:
+    """Strategy v2 change-variable screen: is the business entering an inflection? Uses annual and
+    quarterly statements, growth against the sector, reinvestment, and positive filing triggers."""
+    signals, groups = [], set()
+    for group, key, cut, text in CHANGE_SIGNALS:
+        v = m.get(key)
+        if v is not None and v >= cut:
+            signals.append(text.format(v))
+            groups.add(group)
+    for t in (triggers or [])[:3]:
+        signals.append(f"filing: {t.get('label') or t.get('rule')} ({t.get('date') or ''})".replace(" ()", ""))
+        groups.add("event")
+    return {"inflection_candidate": len(groups) >= 2, "trigger_events": signals, "signal_groups": sorted(groups)}
 
-    Strategy v2: sector-aware. Lenders skip cash-conversion and leverage tests; cyclicals are judged on
-    mid-cycle (3-year average) ROCE, not spot P/E; a documented inflection can stand in for 3-year growth.
-    Pass 1 ranks the research queue (research_priority); it never approves an investment.
+
+def _scale(v, lo, hi):
+    if v is None:
+        return None
+    return max(0.0, min(1.0, (float(v) - lo) / (hi - lo)))
+
+
+def quant_bis(m: dict, pct: dict | None = None, triggers: list | None = None) -> dict:
+    """A numbers-only Business Inflection Score (0-100) for ranking the research queue before any LLM
+    call. Same components as the analyst's BIS; second_engine needs reading and is left to the analyst,
+    so the total is scaled over the components that have data."""
+    from .scoring import BIS_WEIGHTS
+    pct = pct or {}
+
+    def best(*xs):
+        xs = [x for x in xs if x is not None]
+        return max(xs) if xs else None
+
+    def mean(*xs):
+        xs = [x for x in xs if x is not None]
+        return sum(xs) / len(xs) if xs else None
+    parts = {
+        "demand_share": best(_scale(m.get("revenue_acceleration"), 0, 15), _scale(m.get("qtr_acceleration"), 0, 15),
+                             _scale(m.get("ttm_acceleration"), 0, 15),
+                             _scale(m.get("relative_growth_gap"), 0, 15),
+                             _scale(pct.get("revenue_growth_1y"), 50, 95)),
+        "incremental_economics": mean(_scale(m.get("incremental_roce"), 10, 40),
+                                      best(_scale(m.get("margin_delta"), 0, 5), _scale(m.get("qtr_margin_delta"), 0, 5))),
+        "reinvestment_runway": best(_scale(m.get("reinvestment_growth"), 0, 25), _scale(m.get("cwip_to_net_block"), 5, 40)
+                                    if (m.get("incremental_roce") or 0) > 15 else None),
+        "competitive_reinforcement": mean(_scale(pct.get("ebitda_margin"), 40, 95), _scale(pct.get("roce"), 40, 95)),
+    }
+    if triggers:
+        parts["demand_share"] = max(parts["demand_share"] or 0, min(1.0, 0.35 * len(triggers)))
+    have = {k: v for k, v in parts.items() if v is not None}
+    if not have:
+        return {"total": None, "components": {}, "coverage": 0}
+    pts = {k: round(v * BIS_WEIGHTS[k], 1) for k, v in have.items()}
+    total = 100 * sum(pts.values()) / sum(BIS_WEIGHTS[k] for k in have)
+    return {"total": round(total, 1), "components": pts, "coverage": len(have)}
+
+
+def pass1(m: dict, pct: dict | None = None, triggers: list | None = None) -> dict:
+    """Returns {rule: True|False|None}, gates, the two lanes and an overall verdict for one company.
+
+    Strategy v2: sector-aware and relative. Each stock is also judged against its own industry (pct holds
+    its percentile within the industry for ROCE, growth, margins and cash conversion), so a top-quartile
+    company in a low-return industry is not failed by a fixed bar. Lenders skip cash-conversion and leverage
+    tests; cyclicals are judged on mid-cycle (3-year average) ROCE, not spot P/E.
+
+    Two lanes, either qualifies: Compounder (most of the seven quality rules, as before) and Inflection
+    (change signals from two independent groups plus basic health: no leverage or promoter failure, positive
+    operating margin, pledge 20% or less). Pass 1 ranks the research queue; it never approves an investment.
     """
-    from .playbooks import classify
+    from .playbooks import classify, critical_missing
     g = lambda k: _get(m, k)  # noqa: E731
+    pct = pct or {}
+    top = lambda k, cut=70: pct.get(k) is not None and pct[k] >= cut  # noqa: E731
     rules: dict[str, bool | None] = {}
     pb = classify(m)
     lender, cyclical = pb["playbook"] == "lender" or is_financial(m), pb["playbook"] == "cyclical"
-    inf = inflection(m)
+    inf = inflection(m, triggers)
+    relative = []
 
-    s3, q = g("sales_cagr_3y"), g("qtr_sales_yoy")
-    rules["growth"] = None if s3 is None and q is None and not inf["inflection_candidate"] else bool(
-        (s3 or -1e9) >= 15 or (q or -1e9) >= 25 or inf["inflection_candidate"])
+    s3, q, g1 = g("sales_cagr_3y"), g("qtr_sales_yoy"), g("revenue_growth_1y")
+    if s3 is None and q is None and g1 is None and not inf["inflection_candidate"]:
+        rules["growth"] = None
+    else:
+        absolute = (s3 or -1e9) >= 15 or (q or -1e9) >= 25
+        rel = (top("sales_cagr_3y", 75) and (s3 or 0) >= 10) or (top("revenue_growth_1y", 75) and (g1 or 0) >= 10)
+        rules["growth"] = bool(absolute or rel or inf["inflection_candidate"])
+        if rel and not absolute:
+            relative.append("growth top quartile of its industry")
 
     roce, roce_avg = g("roce"), g("roce_3y_avg")
     if cyclical:
-        rules["roce"] = None if roce_avg is None else bool(roce_avg >= 15)
+        rules["roce"] = None if roce_avg is None else bool(roce_avg >= 15 or (top("roce_3y_avg") and roce_avg >= 10))
+    elif roce is None:
+        rules["roce"] = None
     else:
-        rules["roce"] = None if roce is None else bool(roce >= 15 or (roce_avg is not None and roce >= 10 and roce - roce_avg >= 5))
+        absolute = roce >= 15 or (roce_avg is not None and roce >= 10 and roce - roce_avg >= 5)
+        rel = top("roce") and roce >= 10
+        rules["roce"] = bool(absolute or rel)
+        if rel and not absolute:
+            relative.append("ROCE top 30% of its industry")
 
     cfo, ebitda3 = g("cfo_3y"), g("ebitda_3y")
-    rules["cash_conversion"] = None if cfo is None or not ebitda3 or is_financial(m) else bool(ebitda3 > 0 and cfo / ebitda3 >= 0.7)
+    if cfo is None or not ebitda3 or is_financial(m):
+        rules["cash_conversion"] = None
+    else:
+        ratio = cfo / ebitda3 if ebitda3 > 0 else -1
+        rules["cash_conversion"] = bool(ratio >= 0.7 or (top("cash_conversion") and ratio >= 0.5))
 
     debt, cash, ebitda, de = g("debt"), g("cash"), g("ebitda"), g("debt_to_equity")
     lev = None
@@ -77,16 +156,28 @@ def pass1(m: dict) -> dict:
         "mcap_range": None if mcap is None else bool(500 <= mcap <= 20000),
         "liquidity": None if liq is None else bool(liq >= 1),
     }
+    gates_ok = all(v is not False for v in gates.values())
     known = [v for v in rules.values() if v is not None]
     met = sum(known)
     need = max(4, math.ceil(0.7 * len(known)))  # "most of these, not necessarily all"
-    passed = len(known) >= 4 and met >= need and all(v is not False for v in gates.values())
-    review = not passed and all(v is not False for v in gates.values()) and (inf["inflection_candidate"] or len(known) < 4)
-    priority = 10 * met - 5 * (len(known) - met) + (15 if inf["inflection_candidate"] else 0) + 3 * len(inf["trigger_events"])
+    margin = g("opm_qtr") if g("opm_qtr") is not None else g("ebitda_margin")
+    health = {"balance_sheet": rules["balance_sheet"] is not False, "promoter": rules["promoter"] is not False,
+              "operating_margin_positive": margin is None or margin > 0, "pledge_20_or_less": (pledge or 0) <= 20}
+    lanes = {"compounder": len(known) >= 4 and met >= need and gates_ok,
+             "inflection": inf["inflection_candidate"] and gates_ok and all(health.values())}
+    passed = lanes["compounder"] or lanes["inflection"]
+    review = not passed and gates_ok and (inf["inflection_candidate"] or len(known) < 4)
+    qb = quant_bis(m, pct, triggers)
+    priority = (10 * met - 5 * (len(known) - met) + (15 if lanes["inflection"] else 0)
+                + 0.5 * (qb["total"] or 0) + 4 * min(len(triggers or []), 3))
     missing = [k for k, v in rules.items() if v is None]
     return {"rules": rules, "gates": gates, "met": met, "known": len(known), "passed": passed,
+            "lanes": lanes, "lane": "both" if all(lanes.values()) else next((k for k, v in lanes.items() if v), None),
+            "health": health, "relative_passes": relative,
             "screen_status": "PASS" if passed else "REVIEW" if review else "FAIL", **pb, **inf,
-            "research_priority": priority, "missing_critical_fields": missing}
+            "quant_bis": qb["total"], "quant_bis_parts": qb["components"],
+            "research_priority": round(priority, 1), "missing_critical_fields": missing,
+            "missing_sector_data": critical_missing(pb["playbook"], m)}
 
 
 FINANCIAL_WORDS = ("bank", "financ", "nbfc", "insurance", "broker", "capital market", "asset management",
@@ -151,6 +242,38 @@ FILING_RULES = [
 SOFTEN = {"default": ["subsidiary"], "auditor_resignation": ["subsidiary"],
           "regulatory_action": ["commercial taxes", "gst", "goods and services tax", "income tax department"]}
 SKIP = {"regulatory_action": ["granting exemption", "exemption order", "order granting"]}
+
+
+# Positive event triggers in exchange announcements (strategy v2 leading indicators): (rule, label, any-of).
+POSITIVE_RULES = [
+    ("order_win", "order win", ["letter of award", "letter of intent", "bagged", "order worth", "orders worth",
+                                "receipt of order", "received an order", "receipt of purchase order", "work order",
+                                "awarding of order", "order received", "new order", "secures order", "contract worth"]),
+    ("capacity", "capacity commissioned", ["commencement of commercial production", "commercial production",
+                                           "commissioning of", "commissioned", "capacity expansion", "new plant",
+                                           "commencement of operations"]),
+    ("rating_upgrade", "credit rating upgrade", ["upgrade", "upgraded", "outlook revised to positive"]),
+    ("approval", "approval or qualification", ["usfda approval", "approval from", "received approval",
+                                               "product approval", "type approval", "empanel", "qualified as"]),
+    ("promoter_buying", "promoter buying", ["acquisition of shares by promoter", "promoter group acquired",
+                                            "creeping acquisition", "allotment of warrants to promoter"]),
+    ("fund_raise", "growth fund raise", ["qualified institutions placement", "qip"]),
+]
+POSITIVE_SKIP = ["downgrade", "withdrawn", "cancellation of order", "cancelled", "termination"]
+
+
+def positive_triggers(text: str) -> list[dict]:
+    t = (text or "").lower()
+    if any(x in t for x in POSITIVE_SKIP):
+        return []
+    out = []
+    for r, label, phrases in POSITIVE_RULES:
+        if r == "rating_upgrade" and "rating" not in t:
+            continue
+        hit = next((p for p in phrases if p in t), None)
+        if hit:
+            out.append({"rule": r, "label": label, "detail": hit})
+    return out
 
 
 def filing_flags(text: str) -> list[dict]:
@@ -243,7 +366,7 @@ def tier_gates(score: dict, confidence: str, conv: dict, base_multiple, hard_fla
             "b_missing": [] if b_ok else [f"evidence confidence {confidence} (needs Moderate)"]}
 
 
-def conviction(families: dict, hard_flags: int = 0, soft_flags: int = 0, unverified=()) -> dict:
+def conviction(families: dict, hard_flags: int = 0, soft_flags: int = 0, unverified=(), weights=None) -> dict:
     """families: {name: points awarded (0..weight)}; unverified: families with no usable evidence.
 
     Revised 8 Nov 2026 (strategy doc, "Combining signals into a confidence score"): unverified families
@@ -251,11 +374,12 @@ def conviction(families: dict, hard_flags: int = 0, soft_flags: int = 0, unverif
     families, capped at 60 with fewer than 3; each soft flag costs 3 points (3+ reject); a hard flag zeroes
     the score; tiers A 75+, B 62+, C 52+, and 2+ unverified families cap the tier at C.
     """
-    unv = sorted(k for k in set(unverified) if k in WEIGHTS)
+    weights = weights or WEIGHTS
+    unv = sorted(k for k in set(unverified) if k in weights)
     pts = {k: (UNVERIFIED_SHARE * w if k in unv else max(0.0, min(float(families.get(k) or 0), w)))
-           for k, w in WEIGHTS.items()}
+           for k, w in weights.items()}
     total = sum(pts.values())
-    strong = sum(1 for k, w in WEIGHTS.items() if k not in unv and pts[k] >= STRONG_SHARE * w)
+    strong = sum(1 for k, w in weights.items() if k not in unv and pts[k] >= STRONG_SHARE * w)
     notes = []
     if unv:
         notes.append(f"unverified (half weight): {', '.join(unv)}")
@@ -280,11 +404,12 @@ def conviction(families: dict, hard_flags: int = 0, soft_flags: int = 0, unverif
     if tier == "C" and len(unv) >= 2 and total >= TIERS[1][0]:
         notes.append("tier capped at C (2+ unverified families)")
     return {"score": total, "tier": tier, "families": pts, "strong_families": strong, "unverified": unv,
-            "notes": notes}
+            "notes": notes, "weights": dict(weights)}
 
 
-RULE_LABELS = {"growth": "Growth (3y sales CAGR 15%+ or quarterly YoY 25%+)", "roce": "ROCE 15%+ (or 10%+ and rising 5 pts)",
-               "cash_conversion": "Cash conversion (3y CFO / EBITDA 70%+)",
+RULE_LABELS = {"growth": "Growth (3y sales CAGR 15%+, quarterly YoY 25%+, top quartile of its industry, or an inflection)",
+               "roce": "ROCE 15%+ (or 10%+ and rising 5 pts, or 10%+ and top 30% of its industry)",
+               "cash_conversion": "Cash conversion (3y CFO / EBITDA 70%+, or 50%+ and top 30% of its industry)",
                "balance_sheet": "Balance sheet (net debt / EBITDA under 2, dilution under 10%)",
                "promoter": "Promoter (holding 40%+, pledge under 5%, not selling)",
                "valuation": "Valuation (P/E at most 1.5x growth)", "working_capital": "Working capital (debtor days not rising)"}
@@ -294,6 +419,11 @@ GATE_LABELS = {"mcap_range": "Market cap ₹500-20,000 cr", "liquidity": "Liquid
 def pass1_reasons(c: dict) -> list[str]:
     """Why a screened company did not pass, in funnel order (empty list when it passed)."""
     out = []
+    if (c.get("lanes") or {}).get("compounder") is False and (c.get("inflection_candidate") and
+                                                              not (c.get("lanes") or {}).get("inflection")):
+        bad = [k.replace("_", " ") for k, ok in (c.get("health") or {}).items() if not ok]
+        if bad:
+            out.append("inflection lane blocked by health check: " + ", ".join(bad))
     for g, ok in (c.get("gates") or {}).items():
         if ok is False:
             out.append(f"fails {GATE_LABELS.get(g, g)}")

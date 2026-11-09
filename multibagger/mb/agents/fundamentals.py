@@ -35,6 +35,8 @@ FAR_LOW, FAR_HIGH = 200.0, 40000.0
 STATEMENT_MAX_AGE_DAYS = 28
 FRESH_HOURS = float(os.getenv("MB_YAHOO_FRESH_HOURS", "72"))
 RESULTS_WORDS = ("financial result", "quarterly result", "audited result", "unaudited result")
+# Bumped when yahoo.metrics() gains statement fields: in-range records without them get one full fetch.
+STMT_FIELDS = "2026-11-09"
 
 
 def _days_ago(days: float) -> str:
@@ -58,11 +60,12 @@ def plan(store, universe: list[str]) -> dict[str, str]:
         mcap, checked = p.get("mcap"), p.get("as_of") or ""
         # Records from before stmt_as_of existed: a full fetch is the one that has statement fields.
         stmts = p.get("stmt_as_of") or (checked if "roce_3y_avg" in p and not p.get("out_of_range") else "")
-        if fresh and checked >= fresh and results.get(sym, "") <= checked:
+        outdated = bool(stmts) and p.get("stmt_fields") != STMT_FIELDS and not p.get("out_of_range")
+        if fresh and checked >= fresh and results.get(sym, "") <= checked and not outdated:
             out[sym] = "fresh"
         elif mcap is not None and (mcap < FAR_LOW or mcap > FAR_HIGH) and checked >= cutoff:
             out[sym] = "skip"
-        elif stmts >= cutoff and results.get(sym, "") <= stmts:
+        elif stmts >= cutoff and results.get(sym, "") <= stmts and not outdated:
             out[sym] = "light"
         else:
             out[sym] = "full"
@@ -74,7 +77,10 @@ def run(store, log, fetch=yahoo.fetch) -> dict:
     if not universe:
         raise RuntimeError("universe is empty: run the Universe builder first")
     seen = {f["id"]: f.get("as_of", "") for f in store.list("fundamentals")}
-    modes = plan(store, universe)
+    only = inputs.only_symbols()
+    if only:  # a per-stock request from the portal: full refresh of just these
+        universe = [s for s in universe if s in only] or sorted(only)
+    modes = {s: "full" for s in universe} if only else plan(store, universe)
     symbols = sorted((s for s in universe if modes[s] not in ("skip", "fresh")), key=lambda s: (modes[s] != "full", seen.get(s, "")))
     if LIMIT:
         symbols = symbols[:LIMIT]
@@ -116,7 +122,7 @@ def run(store, log, fetch=yahoo.fetch) -> dict:
                 else:
                     full = not rec.get("out_of_range") and not rec.pop("light", False)
                     in_range += full
-                    extra = {"stmt_as_of": now_iso()} if full else {}
+                    extra = {"stmt_as_of": now_iso(), "stmt_fields": STMT_FIELDS} if full else {}
                     buf[sym] = {**rec, **overlays.get(sym, {}), **extra, "symbol": sym, "source": "yahoo",
                                 "as_of": now_iso()}
                 done += 1
@@ -134,6 +140,11 @@ def run(store, log, fetch=yahoo.fetch) -> dict:
                     submit_next()
                 break
     flush()
+    if only:
+        from .. import requests as req
+        req.finish(store, "fundamentals", only, "refreshed from Yahoo")
+        log.info("yahoo: refreshed %s", ", ".join(sorted(only)))
+        return {"symbols": done, "only": sorted(only), "errors": errors}
     store.set("control", "fundamentals", {
         "file": SOURCE, "source": "yahoo", "imported": stamp, "rows": done - missing,
         "recognised": sorted(k for k in yahoo.ROWS) + ["info"], "with_statements": in_range,

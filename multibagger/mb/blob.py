@@ -25,7 +25,7 @@ class LocalBlob:
         base = self.root / prefix
         if not base.exists():
             return []
-        return sorted(str(p.relative_to(self.root)).replace("\\", "/") for p in base.iterdir() if p.is_file())
+        return sorted(str(p.relative_to(self.root)).replace("\\", "/") for p in base.rglob("*") if p.is_file())
 
     def move(self, src: str, dst: str) -> None:
         d = self.root / dst

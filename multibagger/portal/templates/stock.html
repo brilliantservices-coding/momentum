@@ -1,0 +1,59 @@
+{% extends "base.html" %}{% block body %}
+<p class="small"><a href="/candidates">← Watchlist</a>{% if memo %} · <a href="/research/{{sym}}">Full research memo</a>{% endif %} · <a href="/filings?symbol={{sym}}">Filings</a></p>
+<h1>{{sym}} {% if score.tier %}<span class="pill {{'on' if score.tier in ('A','B') else 'off' if score.tier=='Reject' else ''}}">tier {{score.tier}}</span>{% endif %}
+{% if cand.lane %}<span class="pill on">{{cand.lane}} lane</span>{% endif %}</h1>
+<p class="sub">{{ stock_link(sym, cand.name or fund.name) }}{% if cand.industry or fund.industry %} · {{cand.industry or fund.industry}}{% endif %}{% if cand.playbook %} · playbook <strong>{{playbooks.get(cand.playbook, {}).get('name', cand.playbook)}}</strong>{% endif %}
+{% if fund.mcap %} · ₹{{"{:,.0f}".format(fund.mcap)}} cr{% endif %}</p>
+{% if not qualified %}<div class="banner">Not health-qualified for AI research{% if cand %} (it isn't on the watchlist through either lane{% if cand.lanes and cand.lanes.compounder and not cand.lanes.inflection %}, or meets fewer rules than the Settings minimum{% endif %}){% endif %}. Scheduled AI runs skip it; you can still run a stage for it below.</div>{% endif %}
+
+<h2>Pipeline for this stock</h2>
+<div class="tablewrap"><table><tr><th>Stage</th><th>Status</th><th>What's on file / what's left</th><th>Last done</th><th></th></tr>
+{% for s in stages %}<tr><td>{{s.label}}{% if s.llm %} <span class="small">(AI)</span>{% endif %}</td>
+<td><span class="pill {{'on' if s.state=='done' else 'off' if s.state=='failed' else 'soft' if s.state in ('partial','waiting') else ''}}">{{ {'done':'done','todo':'to do','partial':'partly done','waiting':'waiting','failed':'stopped here','na':'not needed'}[s.state] }}</span></td>
+<td class="small">{{s.detail}}{% if s.request and s.request.status=='queued' %}<br><strong>Requested {{s.request.requested|ist}}: queued</strong>{% elif s.request %}<br>Last request {{s.request.finished|ist}}: {{s.request.result}}{% endif %}</td>
+<td class="small">{{s.when|ist if s.when else '–'}}</td>
+<td>{% if s.can_run %}<form method="post" action="/stock/{{sym}}/run/{{s.agent}}"><button{% if s.state in ('todo','partial') %} class="primary"{% endif %} title="Run {{s.label}} for {{sym}} only{% if s.llm %}; uses the AI and counts toward the daily cap{% endif %}">{{'Run' if s.state in ('todo','partial','na') else 'Re-run'}}{% if s.llm and not qualified %} anyway{% endif %}</button></form>{% endif %}</td></tr>{% endfor %}
+</table></div>
+<p class="small">Running a stage here handles this stock only, even if its inputs haven't changed. If that agent is busy, the request waits and goes first in its next run. Usual order: Fundamentals → Screen → Fact extraction → Company analyst → Red team.</p>
+
+{% if cand %}<h2>Screen</h2>
+<div class="grid">
+<div class="card"><h3>Compounder lane {% if cand.lanes %}<span class="pill {{'on' if cand.lanes.compounder else 'off'}}">{{'pass' if cand.lanes.compounder else 'no'}}</span>{% endif %}</h3>
+<ul class="small">{% for k,v in (cand.rules or {}).items() %}<li>{% if v is none %}<span class="unk">?</span>{% elif v %}<span class="tick">✓</span>{% else %}<span class="cross">✗</span>{% endif %} {{rule_labels.get(k,k)}}</li>{% endfor %}</ul>
+{% if cand.relative_passes %}<p class="small">Passed against its industry: {{cand.relative_passes|join(', ')}}</p>{% endif %}</div>
+<div class="card"><h3>Inflection lane {% if cand.lanes %}<span class="pill {{'on' if cand.lanes.inflection else 'off'}}">{{'pass' if cand.lanes.inflection else 'no'}}</span>{% endif %}</h3>
+{% if cand.trigger_events %}<ul class="small">{% for t in cand.trigger_events %}<li>{{t}}</li>{% endfor %}</ul>{% else %}<p class="small">No change signals yet.</p>{% endif %}
+<p class="small">Needs signals from two different groups (demand, margin, returns, filing events): {{(cand.signal_groups or [])|join(', ') or 'none'}}.
+{% if cand.health %}Health: {% for k,v in cand.health.items() %}{{'✓' if v else '✗'}} {{k|replace('_',' ')}}{{', ' if not loop.last}}{% endfor %}.{% endif %}</p></div>
+<div class="card"><h3>Inflection score (numbers only){% if cand.quant_bis is not none %}: {{cand.quant_bis}}/100{% endif %}</h3>
+{% if cand.quant_bis_parts %}<ul class="small">{% for k,v in cand.quant_bis_parts.items() %}<li>{{k|replace('_',' ')|capitalize}}: {{v}} / {{bis_weights[k]}}</li>{% endfor %}</ul>{% endif %}
+<p class="small">Research priority {{cand.research_priority}}. Ranks the AI queue; the analyst's own BIS replaces it once the stock is analysed.</p></div>
+</div>
+{% endif %}
+
+<h2>Change variables and reinvestment</h2>
+{% set cv=[("revenue_growth_1y","Revenue growth, last year %"),("revenue_acceleration","Revenue acceleration (pts)"),("qtr_acceleration","Latest quarter vs last year (pts)"),("revenue_growth_ttm","TTM revenue growth %"),("relative_growth_gap","Growth vs sector (pts)"),("ebitda_margin","EBITDA margin %"),("margin_delta","Margin change, annual (pts)"),("qtr_margin_delta","Margin change, quarter on year-ago (pts)"),("incremental_roce","Incremental ROCE %"),("sales_to_capital_delta","Sales/capital change"),("reinvestment_rate","Reinvestment rate (net capex / NOPAT) %"),("cwip_to_net_block","CWIP / net block %"),("reinvestment_growth","Growth funded at current returns %")] %}
+<div class="tablewrap"><table><tr><th>Measure</th><th>Value</th><th>Industry percentile</th></tr>
+{% for k,l in cv %}<tr><td>{{l}}</td><td class="num">{{ "%.1f"|format(fund[k]) if fund[k] is number else '–' }}</td><td class="num">{{ (cand.peer_pct or {}).get(k, '–') }}</td></tr>{% endfor %}
+{% for k in ("roce","sales_cagr_3y","cash_conversion") %}{% if (cand.peer_pct or {}).get(k) is not none %}<tr><td>{{ {'roce':'ROCE %','sales_cagr_3y':'3-year sales CAGR %','cash_conversion':'Cash conversion (CFO/EBITDA)'}[k] }}</td><td class="num">{{ "%.1f"|format(fund[k]) if fund[k] is number else ('%.2f'|format(fund.cfo_3y / fund.ebitda_3y) if k=='cash_conversion' and fund.cfo_3y is number and fund.ebitda_3y else '–') }}</td><td class="num">{{cand.peer_pct[k]}}</td></tr>{% endif %}{% endfor %}
+</table></div>
+{% if cand.peer_pct and cand.peer_pct.peer_group %}<p class="small">Peers: {{cand.peer_pct.peer_group}}</p>{% endif %}
+
+{% if missing_sector_data %}<h2>Sector-critical data still missing</h2><p class="small">For the {{playbooks.get(cand.playbook, {}).get('name', '')}} playbook. These lower evidence confidence until a fact or field supplies them; company documents usually do.</p>
+<ul>{% for m in missing_sector_data %}<li>{{m}}</li>{% endfor %}</ul>{% endif %}
+
+{% if triggers %}<h2>Positive filing triggers</h2><div class="tablewrap"><table><tr><th>Type</th><th>Filing</th><th>Date</th></tr>
+{% for t in triggers %}<tr><td><span class="pill on">{{t.label}}</span></td><td class="small">{% if t.link %}<a class="ext" href="{{t.link}}" target="_blank" rel="noopener">{{t.subject}}</a>{% else %}{{t.subject}}{% endif %}</td><td class="small">{{t.date}}</td></tr>{% endfor %}</table></div>{% endif %}
+
+{% if alerts %}<h2>Open red flags</h2><ul>{% for a in alerts %}<li><span class="pill {{a.severity}}">{{a.rule}}</span> {{a.detail}} <span class="small">· {{a.source}}</span></li>{% endfor %}</ul>{% endif %}
+
+<h2>Documents</h2>
+{% if docs or docs_waiting %}<ul>{% for d in docs %}<li>{{d.kind}} ({{d.source_grade}}) · {{d.file.rsplit('/',1)[-1]}} · {{d.facts}} facts · read {{d.extracted|ist}}</li>{% endfor %}
+{% for d in docs_waiting %}<li>{{d.rsplit('/',1)[-1]}} · <span class="small">waiting for fact extraction</span></li>{% endfor %}</ul>
+{% else %}<div class="card empty">No annual report, presentation or concall transcript yet. The PC task downloads them for the top 50 qualified stocks into <code>inbox/docs/{{sym}}/</code>.</div>{% endif %}
+
+<h2>Extracted facts ({{facts|length}})</h2>
+{% if facts %}<div class="tablewrap"><table><tr><th>Type</th><th>Statement</th><th>Period</th><th>Source</th></tr>
+{% for f in facts[:60] %}<tr><td><span class="pill">{{f.type}}</span></td><td>{{f.statement}}</td><td class="small">{{f.period or ''}}</td><td class="small">{{f.source_grade or ''}} · {{f.source_type or ''}}{% if f.page %} p.{{f.page}}{% endif %}</td></tr>{% endfor %}</table></div>
+{% else %}<div class="card empty">No facts yet: run Fact extraction above.</div>{% endif %}
+{% endblock %}
