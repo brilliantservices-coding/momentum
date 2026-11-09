@@ -1,5 +1,5 @@
 {% extends "base.html" %}{% block body %}
-<p class="small"><a href="/research">← Research</a></p>
+<p class="small"><a href="/research">← Research</a> · <a href="/stock/{{sym}}">Stages for this stock (run one)</a></p>
 <h1>{{sym}} {% if score.tier %}<span class="pill {{'on' if score.tier in ('A','B') else 'off' if score.tier=='Reject' else ''}}">tier {{score.tier}}</span>{% endif %}</h1>
 <p class="sub">{{ stock_link(sym, score.name or fundamentals.name) }} · score {{score.score}}{% if score.rescored %} (was {{score.score_before_rescore}}, tier {{score.tier_before_rescore}}, before the {{score.rescored|ist('%d %b')}} recalculation){% endif %}{% if score.unverified %} · unverified: {{score.unverified|join(', ')}}{% endif %}{% if memo.archetype %} · {{memo.archetype}}{% endif %} · memo written {{memo.written|ist}}</p>
 <div class="meta">{% if score.playbook %}<span>Playbook: <strong>{{playbooks.get(score.playbook, {}).get('name', score.playbook)}}</strong></span>{% endif %}

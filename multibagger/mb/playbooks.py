@@ -149,3 +149,85 @@ def classify(m: dict) -> dict:
 def brief(playbook_id: str) -> dict:
     p = PLAYBOOKS.get(playbook_id) or PLAYBOOKS["general"]
     return {"id": playbook_id, "name": p["name"], "critical_signals": p["signals"], "disqualifiers": p["disqualifiers"]}
+
+
+# Conviction family weights per playbook (strategy v2: "each sector has its own leading indicators").
+# Every profile sums to 100. Lenders and real estate weigh governance and balance-sheet quality more,
+# order-book businesses weigh visibility, cyclicals weigh the capital cycle and valuation.
+DEFAULT_WEIGHTS = {"theme": 15, "financial": 20, "management": 20, "visibility": 15, "ecosystem": 10,
+                   "valuation": 10, "governance": 10}
+WEIGHT_PROFILES = {
+    "lender": {"theme": 10, "financial": 25, "management": 20, "visibility": 10, "ecosystem": 5, "valuation": 10,
+               "governance": 20},
+    "cyclical": {"theme": 20, "financial": 15, "management": 15, "visibility": 10, "ecosystem": 10, "valuation": 20,
+                 "governance": 10},
+    "capital_goods": {"theme": 15, "financial": 15, "management": 15, "visibility": 25, "ecosystem": 10,
+                      "valuation": 10, "governance": 10},
+    "consumer": {"theme": 10, "financial": 25, "management": 20, "visibility": 15, "ecosystem": 10, "valuation": 10,
+                 "governance": 10},
+    "retail": {"theme": 10, "financial": 25, "management": 20, "visibility": 15, "ecosystem": 5, "valuation": 15,
+               "governance": 10},
+    "hospitals": {"theme": 10, "financial": 25, "management": 20, "visibility": 15, "ecosystem": 5, "valuation": 15,
+                  "governance": 10},
+    "software": {"theme": 10, "financial": 20, "management": 20, "visibility": 20, "ecosystem": 10, "valuation": 10,
+                 "governance": 10},
+    "it_services": {"theme": 10, "financial": 20, "management": 20, "visibility": 20, "ecosystem": 10,
+                    "valuation": 10, "governance": 10},
+    "pharma": {"theme": 10, "financial": 20, "management": 20, "visibility": 15, "ecosystem": 15, "valuation": 10,
+               "governance": 10},
+    "real_estate": {"theme": 10, "financial": 20, "management": 20, "visibility": 15, "ecosystem": 5,
+                    "valuation": 10, "governance": 20},
+    "capital_markets": {"theme": 20, "financial": 20, "management": 15, "visibility": 10, "ecosystem": 10,
+                        "valuation": 15, "governance": 10},
+}
+for _p in ("manufacturing", "chemicals", "auto", "power", "telecom_digital"):
+    WEIGHT_PROFILES[_p] = {"theme": 15, "financial": 20, "management": 15, "visibility": 20, "ecosystem": 10,
+                           "valuation": 10, "governance": 10}
+
+
+def weights_for(playbook_id: str | None) -> dict:
+    return dict(WEIGHT_PROFILES.get(playbook_id or "", DEFAULT_WEIGHTS))
+
+
+# Sector-critical data: (label, fundamentals field or None, fact types that supply it). A field-backed item
+# is missing when the field is empty; a document-backed item is missing until extraction finds a fact.
+CRITICAL_DATA = {
+    "lender": [("Gross / net NPA", None, ("asset_quality",)), ("Credit cost", None, ("asset_quality",)),
+               ("Capital adequacy (CAR)", None, ("capital_adequacy",)), ("Loan (AUM) growth", None, ("loan_growth",)),
+               ("Return on assets", None, ("return_on_assets",))],
+    "capital_goods": [("Order book to revenue", None, ("order_book",)), ("Order inflow", None, ("order_win",)),
+                      ("Receivable days", "debtor_days", ()), ("Executable capacity", None, ("capacity",))],
+    "manufacturing": [("Capacity utilisation", None, ("utilisation",)), ("Capex plan", None, ("capex",)),
+                      ("Incremental ROCE", "incremental_roce", ()), ("Customer wins", None, ("customer", "order_win"))],
+    "chemicals": [("Capacity utilisation", None, ("utilisation",)), ("Capex plan", None, ("capex",)),
+                  ("Margin through the cycle", "ebitda_margin", ()), ("Customer qualification", None, ("customer",))],
+    "consumer": [("Volume growth", None, ("volume_growth",)), ("Distribution reach", None, ("distribution",)),
+                 ("Cash conversion", "cfo_3y", ())],
+    "retail": [("Same-store growth", None, ("same_store_growth",)), ("Store additions", None, ("capacity", "guidance"))],
+    "pharma": [("Regulatory status (USFDA etc.)", None, ("regulatory",)), ("Approvals and launches", None, ("product",)),
+               ("Plant utilisation", None, ("utilisation",))],
+    "auto": [("Platform wins / content per vehicle", None, ("customer", "order_win")), ("Capacity", None, ("capacity",))],
+    "it_services": [("Deal wins (TCV)", None, ("order_win",)), ("Client concentration", None, ("customer",))],
+    "software": [("ARR / recurring revenue", None, ("recurring_revenue",)), ("Retention", None, ("retention",))],
+    "hospitals": [("Occupancy", None, ("utilisation",)), ("ARPOB", None, ("realisation",)), ("Bed additions", None, ("capacity",))],
+    "real_estate": [("Presales", None, ("presales",)), ("Collections", None, ("collections",)),
+                    ("Net debt", "debt", ())],
+    "power": [("Contracted capacity (PPA)", None, ("order_win", "capacity")), ("Commissioning dates", None, ("capacity",))],
+    "capital_markets": [("Active clients / market share", None, ("market_share",))],
+    "telecom_digital": [("Contracted demand", None, ("order_win", "customer")), ("Utilisation", None, ("utilisation",))],
+    "cyclical": [("Mid-cycle ROCE", "roce_3y_avg", ()), ("Capacity additions", None, ("capacity", "capex")),
+                 ("Cost position", None, ("cost_position",))],
+}
+
+
+def critical_missing(playbook_id: str | None, m: dict, fact_types=None) -> list[str]:
+    """Sector-critical data not yet on file. Without fact_types (the screen), document-backed items are
+    left out: they are checked on the stock page and by the analyst once extraction has run."""
+    out = []
+    for label, field, types in CRITICAL_DATA.get(playbook_id or "", []):
+        if field:
+            if m.get(field) is None:
+                out.append(label)
+        elif fact_types is not None and not set(types) & set(fact_types):
+            out.append(label)
+    return out

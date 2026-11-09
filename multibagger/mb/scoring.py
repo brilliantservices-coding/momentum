@@ -58,7 +58,7 @@ def update_tracker(items: list | None, previous: list | None, now: datetime | No
     return out
 
 
-def score_memo(out: dict, red_flags: list, prev_memo: dict | None = None, current_price=None) -> dict:
+def score_memo(out: dict, red_flags: list, prev_memo: dict | None = None, current_price=None, weights=None) -> dict:
     """Everything the strategy computes from one analyst answer. Returns the fields for scores/ and memos/."""
     fam = out.get("families") or {}
     hard = sum(1 for a in red_flags if a.get("severity") == "hard" and a.get("status") != "dismissed")
@@ -73,7 +73,7 @@ def score_memo(out: dict, red_flags: list, prev_memo: dict | None = None, curren
             points["visibility"] = max(0.0, float(points["visibility"]) - cost)
         except (TypeError, ValueError):
             pass
-    score = conviction(points, hard, soft, unverified)
+    score = conviction(points, hard, soft, unverified, weights)
     if failed_tracker:
         score["notes"].append(f"{len(failed_tracker)} failed inflection-to-earnings expectation(s): visibility "
                               f"-{min(6, FAILED_TRACKER_COST * len(failed_tracker))}")

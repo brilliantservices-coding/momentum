@@ -52,6 +52,19 @@ ALIASES: dict[str, list[str]] = {
     "receivables": ["trade receivables annual", "trade receivables"],
     "inventory_turnover": ["inventory turnover ratio annual", "inventory turnover ratio"],
     "pledge_change_qoq": ["promoter pledge change qoq"],
+    # Strategy v2 change variables from Trendlyne's quarterly and TTM columns.
+    "opm_qtr": ["operating profit margin qtr", "operating profit margin qtr percent", "opm qtr"],
+    "opm_qtr_4q_ago": ["operating profit margin qtr 4qtr ago", "operating profit margin qtr 4 qtr ago",
+                       "operating profit margin 4qtr ago", "opm qtr 4qtr ago"],
+    "op_profit_ttm_growth": ["operating profit ttm yoy growth", "operating profit ttm growth"],
+    "sector_rev_growth_qtr": ["sector revenue growth qtr yoy", "sector revenue growth qtr yoy percent"],
+    "industry_rev_growth_qtr": ["industry revenue growth qtr yoy", "industry revenue growth qtr yoy percent"],
+    "op_profit_ttm": ["operating profit ttm"],
+    "op_profit_ttm_1y_ago": ["operating profit ttm 1yr ago", "operating profit ttm 1 yr ago"],
+    "total_assets": ["total assets annual", "total assets"],
+    "total_assets_1y_ago": ["total assets annual 1yr ago", "total assets annual 1 yr ago", "total assets 1yr ago"],
+    "revenue_ttm": ["operating revenue ttm", "revenue ttm"],
+    "revenue_ttm_1y_ago": ["operating revenue ttm 1yr ago", "operating revenue ttm 1 yr ago", "revenue ttm 1yr ago"],
     "volume_1m_avg": ["month volume avg", "volume 1month average", "volume 1 month average", "avg volume 1m"],
 }
 
@@ -73,7 +86,9 @@ def _num(v):
 
 
 TEXT_FIELDS = ("symbol", "name", "bse_code", "sector", "industry")
-DERIVED_INPUTS = {"revenue_annual", "receivables", "inventory_turnover", "pledge_change_qoq"}
+DERIVED_INPUTS = {"revenue_annual", "receivables", "inventory_turnover", "pledge_change_qoq", "revenue_ttm",
+                  "revenue_ttm_1y_ago", "op_profit_ttm", "op_profit_ttm_1y_ago", "total_assets",
+                  "total_assets_1y_ago", "industry_rev_growth_qtr"}
 _KEY_HEADERS = {"nse code", "nse symbol", "symbol", "stock name", "name", "company name"}
 
 
@@ -96,6 +111,24 @@ def _derive(rec: dict) -> None:
         rec["debtor_days"] = round(365 * ar / rev, 1) if rev > 0 else None
     if rec.get("inventory_days") is None and turn:
         rec["inventory_days"] = round(365 / turn, 1) if turn > 0 else None
+    ttm, ttm1 = rec.pop("revenue_ttm", None), rec.pop("revenue_ttm_1y_ago", None)
+    if ttm is not None and ttm1 and ttm1 > 0:
+        rec["revenue_growth_ttm"] = round(100 * (ttm / ttm1 - 1), 2)
+        if rec.get("sales_cagr_3y") is not None:
+            rec["ttm_acceleration"] = round(rec["revenue_growth_ttm"] - rec["sales_cagr_3y"], 2)
+    if rec.get("opm_qtr") is not None and rec.get("opm_qtr_4q_ago") is not None:
+        rec["qtr_margin_delta"] = round(rec["opm_qtr"] - rec["opm_qtr_4q_ago"], 2)
+    peer_growth = rec.pop("industry_rev_growth_qtr", None)
+    if peer_growth is None:
+        peer_growth = rec.get("sector_rev_growth_qtr")
+    if rec.get("qtr_sales_yoy") is not None and peer_growth is not None:  # industry first, else sector
+        rec["relative_growth_gap"] = round(rec["qtr_sales_yoy"] - peer_growth, 2)
+    op, op1 = rec.pop("op_profit_ttm", None), rec.pop("op_profit_ttm_1y_ago", None)
+    ta, ta1 = rec.pop("total_assets", None), rec.pop("total_assets_1y_ago", None)
+    if None not in (op, op1, ta, ta1) and ta > 0:
+        # Incremental return on new assets (TTM operating profit change / total-asset change, after an assumed
+        # 25% tax); the asset change has a floor so a near-zero change doesn't explode the ratio.
+        rec["incremental_roce"] = round(100 * 0.75 * (op - op1) / max(ta - ta1, 0.02 * ta), 2)
     chg = rec.pop("pledge_change_qoq", None)
     if rec.get("pledge_prev") is None and chg is not None and rec.get("pledge") is not None:
         rec["pledge_prev"] = max(0.0, rec["pledge"] - chg)
@@ -133,7 +166,8 @@ def parse(data: bytes, filename: str) -> tuple[dict[str, dict], dict]:
         if rec.get("avg_traded_value_cr") is None and rec.get("volume_1m_avg") and rec.get("price"):
             rec["avg_traded_value_cr"] = rec["volume_1m_avg"] * rec["price"] / 1e7
         out[key] = rec
-    derived = {k for rec in out.values() for k in ("debtor_days", "inventory_days", "pledge_prev", "avg_traded_value_cr")
+    derived = {k for rec in out.values() for k in ("debtor_days", "inventory_days", "pledge_prev", "avg_traded_value_cr",
+                                                    "revenue_growth_ttm", "qtr_margin_delta", "relative_growth_gap")
                if rec.get(k) is not None}
     found = (set(mapping) | derived) - DERIVED_INPUTS
     report = {"rows": len(out), "recognised": sorted(found), "missing": sorted(set(ALIASES) - found - DERIVED_INPUTS)}

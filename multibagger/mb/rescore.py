@@ -8,6 +8,7 @@ fingerprint moved to the revised prompt, so the analyst doesn't re-run them just
 from __future__ import annotations
 
 from . import inputs
+from .playbooks import DEFAULT_WEIGHTS
 from .rules import tier_for
 from .store import now_iso
 
@@ -41,6 +42,13 @@ Return {{"archetype": "...", "theme_id": "... or null", "summary": "2-3 sentence
 "open_questions": ["what to read next"], "guidance_track_record": "met/missed summary or unknown"}}"""
 
 
+def _rescale(points, old, new):
+    try:
+        return float(points) * float(new) / float(old) if old and new else points
+    except (TypeError, ValueError):
+        return points
+
+
 def unverified_families(families: dict) -> list[str]:
     out = []
     for k, v in (families or {}).items():
@@ -68,14 +76,21 @@ def run(store, log=None) -> dict:
             continue
         rec = company_record(store, sym)
         unv = unverified_families(fam)
-        out = {**memo, "families": {k: {**(v or {}), "unverified": k in unv} for k, v in fam.items()}}
-        v2 = score_memo(out, rec["red_flags"], memo, (rec.get("fundamentals") or {}).get("price"))
+        # Points were given out of the weights in force when the memo was written (the default profile
+        # before the sector weights); rescale them to the stock's playbook weights.
+        old_w = (memo.get("score") or {}).get("weights") or DEFAULT_WEIGHTS
+        new_w = rec["family_weights"]
+        out = {**memo, "families": {k: {**(v or {}), "unverified": k in unv,
+                                        "points": _rescale((v or {}).get("points"), old_w.get(k), new_w.get(k))}
+                                    for k, v in fam.items()}}
+        v2 = score_memo(out, rec["red_flags"], memo, (rec.get("fundamentals") or {}).get("price"), weights=new_w)
         base = v2["score"]
         doc = {**{k: base[k] for k in ("families", "strong_families", "unverified", "notes")},
                "score_before_rescore": s.get("score"), "tier_before_rescore": s.get("tier"), "rescored": stamp,
                "evidence_confidence": v2["evidence_confidence"], "bis": v2["bis"]["total"],
                "convergence_passed": v2["convergence"]["passed"], "gates": v2["gates"],
-               "base_multiple": v2["base_multiple"], "rules_version": v2["rules_version"]}
+               "base_multiple": v2["base_multiple"], "rules_version": v2["rules_version"],
+               "playbook": (rec.get("playbook") or {}).get("id"), "weights": base.get("weights")}
         score, tier = base["score"], base["tier"]
         if s.get("redteamed"):
             rt = store.get("redteam", sym) or {}

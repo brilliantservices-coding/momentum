@@ -126,16 +126,19 @@ def _funnel():
         if p.get("action") == "buy starter":
             proposals.setdefault(p.get("symbol"), p)
     held = {h["id"] for h in store.list("holdings")}
-    stage_names = ["Screened (fundamentals loaded)", "Market cap and liquidity gates", "Enough data (4+ rules known)",
-                   "Pass 1 rules met (70%+ of known)", "No open hard red flag: watchlist", "Analysed by the AI analyst",
+    stage_names = ["Screened (fundamentals loaded)", "Market cap and liquidity gates", "Enough data (4+ rules known, or an inflection)",
+                   "Pass 1: Compounder or Inflection lane", "No open hard red flag: watchlist", "Analysed by the AI analyst",
                    "Conviction 52+ (tier A, B or C after the v2 gates)", "Cleared the red team", "Proposed for purchase",
                    "Approved by you / held"]
     rows = []
     for c in cands:
         sym, gates = c["id"], c.get("gates") or {}
-        known, met = c.get("known") or 0, c.get("met") or 0
-        checks = [True, all(v is not False for v in gates.values()), known >= 4,
-                  known >= 4 and met >= max(4, -(-7 * known // 10)), c.get("passed") and not c.get("blocked_by")]
+        known = c.get("known") or 0
+        lanes = c.get("lanes") or {}
+        inflection = bool(lanes.get("inflection"))
+        p1 = c.get("pass1_passed", c.get("passed") or bool(c.get("blocked_by")))
+        checks = [True, all(v is not False for v in gates.values()), known >= 4 or inflection,
+                  bool(p1), c.get("passed") and not c.get("blocked_by")]
         s = scores.get(sym)
         checks += [bool(s), bool(s) and s.get("tier") in ("A", "B", "C"),
                    bool(s) and s.get("tier") in ("A", "B", "C") and not s.get("redteam_needed"),
@@ -267,11 +270,20 @@ def candidates(request: Request, all: int = 0):
     store = get_store()
     where = [] if all else [("passed", "==", True)]
     from mb.agents._context import strength
-    rows = sorted(store.list("candidates", where=where, order_by="met", limit=500), key=strength)
+    rows = sorted(store.list("candidates", where=where, order_by="met", limit=3000 if all else 500), key=strength)
+    lane = request.query_params.get("lane", "")
+    if lane in ("compounder", "inflection"):
+        rows = [r for r in rows if (r.get("lanes") or {}).get(lane)]
+    rows = rows[:500]
+    from mb.agents._context import qualified
+    need = int(llm.get_settings(store).get("min_rules_met") or 5)
+    for r in rows:
+        r["qualified"] = qualified(r, need)
     alerts = {}
     for a in store.list("alerts", where=[("status", "==", "open")]):
         alerts.setdefault(a.get("symbol"), []).append(a)
-    return render(request, "candidates.html", rows=rows, alerts=alerts, show_all=all,
+    return render(request, "candidates.html", rows=rows, alerts=alerts, show_all=all, lane=lane,
+                  progress=_progress(store),
                   screen=(store.list("screens", order_by="date", limit=1) or [None])[0])
 
 
@@ -423,6 +435,145 @@ def research_company(request: Request, symbol: str):
     return render(request, "research_company.html", sym=sym, memo=memo or {}, score=score or {},
                   redteam=store.get("redteam", sym), facts=facts, history=history,
                   fundamentals=store.get("fundamentals", sym) or {}, weights=WEIGHTS)
+
+
+def _stock_stages(store, sym: str) -> dict:
+    """Per-stock pipeline view: each stage, whether it is done for this stock, and what is left."""
+    from mb import requests
+    from mb.agents._context import qualified
+    from mb.agents.fundamentals import STMT_FIELDS
+    from mb.playbooks import critical_missing
+    f = store.get("fundamentals", sym) or {}
+    c = store.get("candidates", sym) or {}
+    score, memo, rt = store.get("scores", sym) or {}, store.get("memos", sym) or {}, store.get("redteam", sym)
+    filings = store.list("filings", where=[("symbol", "==", sym)])
+    facts = store.list("facts", where=[("symbol", "==", sym)])
+    docs_done = store.list("documents", where=[("symbol", "==", sym)])
+    docs_waiting = get_blob().list(f"inbox/docs/{sym}/")
+    alerts = [a for a in store.list("alerts", where=[("symbol", "==", sym)]) if a.get("status") == "open"]
+    triggers = sorted(store.list("triggers", where=[("symbol", "==", sym)]), key=lambda t: t.get("created") or "",
+                      reverse=True)
+    proposals = [x for x in store.list("proposals", where=[("symbol", "==", sym)])]
+    held = bool(store.get("holdings", sym))
+    reqs = requests.for_symbol(store, sym)
+    need = int(llm.get_settings(store).get("min_rules_met") or 5)
+    ok = qualified(c, need)
+    unextracted = [x for x in filings if not x.get("extracted")]
+    wanted = sym in ((store.get("control", "docs_wanted") or {}).get("symbols") or [])
+
+    def st(agent, label, state, detail, when=None, llm_stage=False, can_run=True):
+        return {"agent": agent, "label": label, "state": state, "detail": detail, "when": when, "llm": llm_stage,
+                "can_run": can_run and agent in requests.STAGE_IDS, "request": reqs.get(agent)}
+    stages = []
+    if not f:
+        stages.append(st("fundamentals", "Fundamentals", "todo", "no numbers on file yet"))
+    else:
+        has_change = f.get("revenue_acceleration") is not None or f.get("qtr_margin_delta") is not None
+        stages.append(st("fundamentals", "Fundamentals", "done" if f.get("stmt_fields") == STMT_FIELDS or has_change
+                         else "partial", ("statements and change variables on file" if has_change else
+                                          "ratios only: no change variables yet (refresh fetches them)") +
+                         (" · Trendlyne overlay" if f.get("overlay_as_of") else ""), f.get("as_of")))
+    if not c:
+        stages.append(st("screener", "Screen (Pass 1)", "todo", "not screened yet"))
+    else:
+        lane = c.get("lane")
+        why = "; ".join(pass1_reasons(c)) if not c.get("passed") else ""
+        stages.append(st("screener", "Screen (Pass 1)", "done" if c.get("passed") else "failed",
+                         (f"passed: {lane} lane" if c.get("passed") else f"did not pass: {why or c.get('blocked_by') or ''}")
+                         + f" · {c.get('met')}/{c.get('known')} rules", c.get("screened")))
+    stages.append(st("forensic", "Red-flag checks", "failed" if any(a.get("severity") == "hard" for a in alerts)
+                     else "done", f"{len(alerts)} open flag(s)" if alerts else "no open flags", can_run=False))
+    stages.append(st("documents", "Company documents", "done" if docs_done else "waiting" if docs_waiting else "todo",
+                     f"{len(docs_done)} read, {len(docs_waiting)} waiting in the bucket" +
+                     ("" if docs_done or docs_waiting else (" · on the PC download list" if wanted else
+                                                           " · not on the PC download list (top 50 only)")),
+                     can_run=False))
+    ext_state = "done" if (filings or docs_done) and not unextracted and not docs_waiting else (
+        "partial" if facts else "todo")
+    stages.append(st("extraction", "Fact extraction", ext_state,
+                     f"{len(facts)} facts; {len(unextracted)} of {len(filings)} filings and {len(docs_waiting)} "
+                     "documents still to read", max((x.get("extracted") or "" for x in facts), default=None),
+                     llm_stage=True))
+    if memo:
+        stale = (score.get("rules_version") or "") < "v2" or not memo.get("bis_scored")
+        stages.append(st("analyst", "Company analyst", "partial" if stale else "done",
+                         f"score {score.get('score')} · tier {score.get('tier')} · evidence "
+                         f"{score.get('evidence_confidence') or '?'}" + (" · memo predates strategy v2" if stale else ""),
+                         memo.get("written"), llm_stage=True))
+    else:
+        stages.append(st("analyst", "Company analyst", "todo", "not analysed yet", llm_stage=True))
+    if rt:
+        stages.append(st("redteam", "Red team", "done", f"{rt.get('verdict')} · {rt.get('score_before')} → "
+                         f"{rt.get('score_after')}", rt.get("written"), llm_stage=True, can_run=bool(memo)))
+    else:
+        stages.append(st("redteam", "Red team", "todo" if score.get("redteam_needed") else "na",
+                         "waiting (tier A/B)" if score.get("redteam_needed") else "only needed for tier A and B",
+                         llm_stage=True, can_run=bool(memo)))
+    prop = next((x for x in sorted(proposals, key=lambda x: x.get("created") or "", reverse=True)), None)
+    stages.append(st("portfolio", "Proposal / holding", "done" if held or prop else "na",
+                     "held" if held else f"{prop.get('action')} · {prop.get('status')}" if prop else "no ticket",
+                     can_run=False))
+    fact_types = [x.get("type") for x in facts]
+    return {"stages": stages, "fund": f, "cand": c, "score": score, "memo": memo, "qualified": ok,
+            "facts": facts, "docs": docs_done, "docs_waiting": docs_waiting, "alerts": alerts,
+            "triggers": triggers[:15], "filings": len(filings),
+            "missing_sector_data": critical_missing(c.get("playbook"), f, fact_types) if c else []}
+
+
+def _progress(store) -> dict:
+    """Compact per-stock progress for the watchlist: {symbol: {extraction, analyst, redteam}}."""
+    facts = {}
+    for x in store.list("facts"):
+        facts[x.get("symbol")] = facts.get(x.get("symbol"), 0) + 1
+    scores = {x["id"]: x for x in store.list("scores")}
+    rts = {x["id"] for x in store.list("redteam")}
+    out = {}
+    for sym in set(facts) | set(scores):
+        sc = scores.get(sym) or {}
+        out[sym] = {"facts": facts.get(sym, 0), "analysed": bool(sc),
+                    "tier": sc.get("tier"), "redteam": sym in rts}
+    return out
+
+
+@app.get("/stock", response_class=HTMLResponse)
+def stock_lookup(symbol: str = ""):
+    return RedirectResponse(f"/stock/{quote(symbol.strip().upper())}" if symbol.strip() else "/candidates",
+                            status_code=303)
+
+
+@app.get("/stock/{symbol}", response_class=HTMLResponse)
+def stock_page(request: Request, symbol: str, msg: str = ""):
+    from mb.requests import STAGES
+    store = get_store()
+    sym = symbol.upper()
+    data = _stock_stages(store, sym)
+    if not data["fund"] and not data["cand"] and not data["memo"]:
+        raise HTTPException(404, "Unknown stock (no fundamentals, screen or research for it)")
+    return render(request, "stock.html", sym=sym, **data, stage_labels={a: lbl for a, lbl, _ in STAGES},
+                  rule_labels=RULE_LABELS, msg=msg)
+
+
+@app.post("/stock/{symbol}/run/{agent_id}")
+def stock_run(request: Request, symbol: str, agent_id: str):
+    """Runs one stage for one stock. If that agent is busy, the request waits and is taken first by its
+    next run (a run in progress starts one for the waiting stocks when it ends)."""
+    from mb import requests
+    sym = symbol.upper()
+    if agent_id not in requests.STAGE_IDS:
+        raise HTTPException(400)
+    store = get_store()
+    if (store.get("control", "global") or {}).get("killed"):
+        return back(f"/stock/{sym}", "Kill switch is on: release it on the overview first")
+    user = current_user(request)
+    requests.add(store, agent_id, sym, user)
+    store.set("audit", f"{now_iso()}-{agent_id}-{sym}", {"at": now_iso(), "user": user, "agent": agent_id,
+                                                        "symbol": sym, "action": "run for stock"})
+    try:
+        control.run_now(agent_id, env={"MB_SYMBOLS": sym})
+    except control.AlreadyRunning:
+        return back(f"/stock/{sym}", f"{agent_id} is busy with another run: {sym} is queued and goes first "
+                                     "in its next run (started automatically when the current one ends)")
+    return back(f"/stock/{sym}", f"Started {agent_id} for {sym}. Refresh in a minute or two to see the result.")
 
 
 @app.get("/settings", response_class=HTMLResponse)
