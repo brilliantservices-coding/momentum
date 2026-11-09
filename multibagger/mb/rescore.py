@@ -8,7 +8,7 @@ fingerprint moved to the revised prompt, so the analyst doesn't re-run them just
 from __future__ import annotations
 
 from . import inputs
-from .rules import conviction, tier_for
+from .rules import tier_for
 from .store import now_iso
 
 MISSING_WORDS = ("unknown", "no data", "not available", "no evidence", "not provided", "no information",
@@ -56,6 +56,7 @@ def unverified_families(families: dict) -> list[str]:
 def run(store, log=None) -> dict:
     from .agents._context import company_record
     from .agents.analyst import PROMPT
+    from .scoring import score_memo
     themes = [{"id": t["id"], "name": t.get("name"), "total": t.get("total")}
               for t in store.list("themes", where=[("active", "==", True)])]
     stamp, changed, kept_hash = now_iso(), {}, 0
@@ -66,12 +67,15 @@ def run(store, log=None) -> dict:
         if not fam:
             continue
         rec = company_record(store, sym)
-        hard = sum(1 for a in rec["red_flags"] if a["severity"] == "hard" and a.get("status") != "dismissed")
-        soft = sum(1 for a in rec["red_flags"] if a["severity"] == "soft" and a.get("status") != "dismissed")
         unv = unverified_families(fam)
-        base = conviction({k: (v or {}).get("points") for k, v in fam.items()}, hard, soft, unv)
+        out = {**memo, "families": {k: {**(v or {}), "unverified": k in unv} for k, v in fam.items()}}
+        v2 = score_memo(out, rec["red_flags"], memo, (rec.get("fundamentals") or {}).get("price"))
+        base = v2["score"]
         doc = {**{k: base[k] for k in ("families", "strong_families", "unverified", "notes")},
-               "score_before_rescore": s.get("score"), "tier_before_rescore": s.get("tier"), "rescored": stamp}
+               "score_before_rescore": s.get("score"), "tier_before_rescore": s.get("tier"), "rescored": stamp,
+               "evidence_confidence": v2["evidence_confidence"], "bis": v2["bis"]["total"],
+               "convergence_passed": v2["convergence"]["passed"], "gates": v2["gates"],
+               "base_multiple": v2["base_multiple"], "rules_version": v2["rules_version"]}
         score, tier = base["score"], base["tier"]
         if s.get("redteamed"):
             rt = store.get("redteam", sym) or {}
@@ -80,14 +84,16 @@ def run(store, log=None) -> dict:
             else:
                 adj = max(-15.0, min(0.0, float(rt.get("score_adjustment") or 0)))
                 score = max(0.0, round(score + adj, 1))
-                tier = tier_for(score, len(unv))
+                tier = tier_for(score, len(base["unverified"]), v2["gates"])
                 doc["redteam_adjustment"] = adj
         doc.update({"score": score, "tier": tier, "redteam_needed": tier in ("A", "B") and not s.get("redteamed")})
         if s.get("inputs_hash") == inputs.digest(rec, themes, PROMPT_BEFORE_REVISION):
             doc["inputs_hash"] = inputs.digest(rec, themes, PROMPT)
             kept_hash += 1
         store.set("scores", sym, doc, merge=True)
-        store.set("memos", sym, {"score": base, "rescored": stamp}, merge=True)
+        store.set("memos", sym, {"score": base, "rescored": stamp, "convergence": v2["convergence"],
+                                 "gates": v2["gates"], "evidence_confidence_final": v2["evidence_confidence"]},
+                  merge=True)
         changed[sym] = f"{s.get('score')} ({s.get('tier')}) -> {score} ({tier})"
     store.set("control", "rescore", {"at": stamp, "rescored": len(changed), "unchanged_inputs": kept_hash})
     if log:

@@ -6,24 +6,57 @@ red-flag overrides and tier are computed here by the strategy's rules, not by th
 from __future__ import annotations
 
 from .. import inputs, llm
-from ..rules import WEIGHTS, conviction
+from ..rules import WEIGHTS
+from ..scoring import score_memo
+from ..playbooks import VERSION as PLAYBOOK_VERSION
 from ..store import now_iso
 from ._context import ARCHETYPES, GROUND_RULES, company_record, compact, eligible, per_run, strength
 
 
 
-PROMPT = """Analyse {symbol} as a potential multibagger (20%+ earnings growth for 5+ years plus re-rating).
+PROMPT = """Analyse {symbol} as a potential multibagger (strategy v2). The thesis to test:
+structural opportunity -> the company takes disproportionate share -> incremental economics improve ->
+management reinvests into the advantage -> leading indicators convert into earnings -> earnings compound ->
+valuation may re-rate. Look for a company entering this sequence early, and separate genuine inflections from
+cyclical peaks, accounting artefacts, speculative capex and credit-risk build-up.
 
-Signal families and their maximum points: {weights}.
-What earns full marks: theme = sits in an active theme scoring 24+/30; financial = Pass 1 fully met with
-accelerating revenue and margins; management = 80%+ guidance hit rate, clean capital allocation, insider
-buying; visibility = order book above 2x revenue, capacity on time, new customers qualified; ecosystem =
-customer/supplier/hiring/clearance/trade data independently confirm the story; valuation = base-case
-3-year value at least 2.5x the current price; governance = no hard flags and at most one soft flag.
-Score what the evidence supports. The record has fundamentals, the screen, red flags and filing
-headlines (no concall transcripts or annual reports), so some families may have no usable evidence at all:
-then set "unverified": true for that family (the system gives it half its weight and never counts it as
-strong) instead of guessing. Weak or negative evidence is not the same as no evidence: score it low.
+Sector playbook (decides which facts matter, never qualifies the stock): {playbook}
+Score each of its critical signals; for lenders do not use cash conversion or net debt/EBITDA (use loan
+growth, asset quality, credit cost, capital adequacy, ROA); for cyclicals normalise peak margins and returns
+before awarding financial or valuation points.
+
+Signal families and their maximum points: {weights}. Score each family linearly from 0 to its weight.
+- theme: structural runway, penetration, capital-cycle stage, theme valuation (active theme 24+/30 = full).
+- financial (20): 12 for sector-adjusted quality, balance sheet and cash economics + 8 from the Business
+  Inflection Score economics (incremental returns, margins, asset turns).
+- management: guidance accuracy, capital allocation, execution, alignment.
+- visibility (15): 9 for the playbook's leading indicators + 6 for leading signals already converting into
+  reported revenue and earnings.
+- ecosystem: independent customer/supplier/regulator/trade corroboration (not the company's own words).
+- valuation: scenario returns on normalised earnings; full marks needs a base-case 3-year value 2.5x+.
+- governance: universal and sector-specific forensic checks.
+The record has fundamentals, the screen with change variables, red flags, filing headlines and extracted
+facts (no concall transcripts or annual reports). A family with no usable evidence at all: set
+"unverified": true (it gets half its weight and never counts as strong) instead of guessing. Weak or negative
+evidence is not the same as no evidence: score it low. An unknown but critical fact lowers evidence
+confidence; it is not a negative fact. Do not count correlated evidence twice (a presentation and an
+interview repeating the same figure are one source group).
+
+Business Inflection Score (diagnostic, 0-100): demand_share (20, growth accelerating or above the sector),
+incremental_economics (25), reinvestment_runway (20), competitive_reinforcement (20, scale strengthens the
+moat), second_engine (15, credible adjacent engine).
+
+Sector signals: for each critical signal give status CONFIRMED / PARTIAL / UNTESTED / FAILED, the source
+grade (P1-P6) and a source_group naming the underlying evidence (e.g. "Q2 FY27 results filing").
+
+Inflection-to-Earnings tracker: turn the 2-4 main leading signals into falsifiable expectations. Previous
+tracker (update statuses with any new evidence; keep the same signal wording; set timeline_revised only if
+the company itself revised the timeline): {previous_tracker}
+
+Evidence confidence: High = 80%+ of score-driving evidence verified, sector-critical fields verified, 2+
+independent source groups behind the core inflection, no unresolved contradiction, primary-source support;
+Moderate = 60-79%, one important non-fatal field unverified; Low = below 60%, a critical sector metric
+missing, or the thesis rests mainly on management assertion.
 
 Archetypes: {archetypes}.
 Active themes: {themes}
@@ -31,12 +64,23 @@ Active themes: {themes}
 Company record:
 {record}
 
-Return {{"archetype": "...", "theme_id": "... or null", "summary": "2-3 sentences",
+Return {{"archetype": "...", "theme_id": "... or null", "primary_playbook": "...", "summary": "2-3 sentences",
+"one_sentence_thesis": "why it can compound earnings for 5-10 years",
 "drivers": [{{"driver": "...", "proof_metric": "e.g. Q3 FY28 utilisation above 75%"}}] (exactly 3),
-"valuation": {{"current_price": n or null, "bull_3y": n, "base_3y": n, "bear_3y": n, "method": "..."}},
-"families": {{"theme": {{"points": n, "unverified": true|false, "evidence": ["source: claim"]}}, "financial": {{...}}, "management": {{...}},
-"visibility": {{...}}, "ecosystem": {{...}}, "valuation": {{...}}, "governance": {{...}}}},
+"bis": {{"demand_share": n, "incremental_economics": n, "reinvestment_runway": n, "competitive_reinforcement": n,
+"second_engine": n, "notes": "..."}},
+"sector_signals": [{{"signal": "...", "status": "CONFIRMED|PARTIAL|UNTESTED|FAILED", "source_grade": "P1-P6",
+"source_group": "...", "evidence": "source: claim"}}],
+"inflection_tracker": [{{"signal": "...", "first_observed": "e.g. Q2 FY27", "expected_consequence": "...",
+"expected_lag_quarters": n, "target_metric": "...", "target": "...", "actual": "... or null",
+"status": "UNTESTED|CONFIRMED|PARTIAL|FAILED", "timeline_revised": false}}],
+"valuation": {{"current_price": n or null, "bull_3y": n, "base_3y": n, "bear_3y": n, "method": "...",
+"assumed_eps_cagr": "...", "terminal_multiple": "...", "growth_duration": "..."}},
+"families": {{"theme": {{"points": n, "unverified": true|false, "evidence": ["source: claim"]}}, "financial": {{...}},
+"management": {{...}}, "visibility": {{...}}, "ecosystem": {{...}}, "valuation": {{...}}, "governance": {{...}}}},
+"evidence_confidence": "High|Moderate|Low", "extraordinary_claims": ["claims needing more corroboration"],
 "key_risks": ["..."], "kill_criteria": ["observable condition that forces a sell"],
+"add_trim_exit": {{"add": "...", "trim": "...", "exit": "..."}},
 "open_questions": ["what to read next"], "guidance_track_record": "met/missed summary or unknown"}}"""
 
 
@@ -71,9 +115,12 @@ def run(store, log) -> dict:
             stopped = "time"
             log.warning("near the job timeout: stopping here, the next run continues")
             break
+        prev_memo = store.get("memos", sym) or {}
         try:
             out = llm.complete_json(GROUND_RULES, PROMPT.format(
                 symbol=sym, weights=WEIGHTS, archetypes="; ".join(ARCHETYPES), themes=themes or "(none scored yet)",
+                playbook=compact(rec.get("playbook"), 3000),
+                previous_tracker=compact(prev_memo.get("inflection_tracker") or [], 6000) or "[]",
                 record=compact(rec)), agent="analyst", store=store)
         except llm.BudgetExceeded as exc:
             stopped = "daily cap"
@@ -83,18 +130,23 @@ def run(store, log) -> dict:
             errors[sym] = str(exc)[:300]
             log.error("%s: %s", sym, exc)
             continue
-        fam = out.get("families", {})
-        hard = sum(1 for a in rec["red_flags"] if a["severity"] == "hard" and a.get("status") != "dismissed")
-        soft = sum(1 for a in rec["red_flags"] if a["severity"] == "soft" and a.get("status") != "dismissed")
-        unverified = [k for k, v in fam.items() if (v or {}).get("unverified") is True]
-        score = conviction({k: (v or {}).get("points") for k, v in fam.items()}, hard, soft, unverified)
+        v2 = score_memo(out, rec["red_flags"], prev_memo, price)
+        score = v2["score"]
         stamp = now_iso()
         prev = store.get("scores", sym) or {}
         store.set("scores", sym, {"symbol": sym, "name": c.get("name"), **score, "archetype": out.get("archetype"),
                                   "theme_id": out.get("theme_id"), "previous_score": prev.get("score"),
                                   "analysed": stamp, "redteam_needed": score["tier"] in ("A", "B"),
-                                  "inputs_hash": key, "price_at_analysis": price})
-        memo = {"symbol": sym, **out, "score": score, "written": stamp}
+                                  "inputs_hash": key, "price_at_analysis": price,
+                                  "playbook": (rec.get("playbook") or {}).get("id"),
+                                  "evidence_confidence": v2["evidence_confidence"], "bis": v2["bis"]["total"],
+                                  "convergence_passed": v2["convergence"]["passed"], "gates": v2["gates"],
+                                  "base_multiple": v2["base_multiple"], "rules_version": v2["rules_version"],
+                                  "model_version": llm.get_settings(store).get("model"),
+                                  "playbook_version": PLAYBOOK_VERSION})
+        memo = {"symbol": sym, **out, "inflection_tracker": v2["inflection_tracker"], "score": score,
+                "bis_scored": v2["bis"], "convergence": v2["convergence"],
+                "evidence_confidence_final": v2["evidence_confidence"], "gates": v2["gates"], "written": stamp}
         store.set("memos", sym, memo)
         store.set("memo_history", f"{sym}-{stamp}", memo)
         results[sym] = f"{score['score']} ({score['tier']})"

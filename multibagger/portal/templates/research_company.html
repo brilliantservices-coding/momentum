@@ -2,10 +2,29 @@
 <p class="small"><a href="/research">← Research</a></p>
 <h1>{{sym}} {% if score.tier %}<span class="pill {{'on' if score.tier in ('A','B') else 'off' if score.tier=='Reject' else ''}}">tier {{score.tier}}</span>{% endif %}</h1>
 <p class="sub">{{ stock_link(sym, score.name or fundamentals.name) }} · score {{score.score}}{% if score.rescored %} (was {{score.score_before_rescore}}, tier {{score.tier_before_rescore}}, before the {{score.rescored|ist('%d %b')}} recalculation){% endif %}{% if score.unverified %} · unverified: {{score.unverified|join(', ')}}{% endif %}{% if memo.archetype %} · {{memo.archetype}}{% endif %} · memo written {{memo.written|ist}}</p>
-{% if memo.summary %}<div class="card"><p style="margin-top:0">{{memo.summary}}</p>
+<div class="meta">{% if score.playbook %}<span>Playbook: <strong>{{playbooks.get(score.playbook, {}).get('name', score.playbook)}}</strong></span>{% endif %}
+{% if score.evidence_confidence %}<span>Evidence confidence: <span class="pill {{'on' if score.evidence_confidence=='High' else 'off' if score.evidence_confidence=='Low' else ''}}">{{score.evidence_confidence}}</span></span>{% endif %}
+{% if score.bis is not none %}<span>Business Inflection Score: <strong>{{score.bis}}</strong>/100{% if memo.bis_scored %} ({{memo.bis_scored.label}}){% endif %}</span>{% endif %}
+{% if score.base_multiple %}<span>Base case 3y: {{score.base_multiple}}x</span>{% endif %}
+{% if score.rules_version %}<span class="small">rules {{score.rules_version}}{% if score.model_version %} · {{score.model_version}}{% endif %}</span>{% endif %}</div>
+{% if score.gates and (score.gates.a_missing or score.gates.b_missing) %}<p class="small">Tier gates not met: {{ (score.gates.a_missing + score.gates.b_missing)|join(' · ') }}</p>{% endif %}
+{% if memo.summary %}<div class="card">{% if memo.one_sentence_thesis %}<p style="margin-top:0"><strong>{{memo.one_sentence_thesis}}</strong></p>{% endif %}<p style="margin-top:0">{{memo.summary}}</p>
 {% if memo.drivers %}<h3>Three drivers and their proof metrics</h3><ol>{% for d in memo.drivers %}<li>{{d.driver}} <span class="small">· proof: {{d.proof_metric}}</span></li>{% endfor %}</ol>{% endif %}
 {% if memo.valuation %}<p class="small">3-year value: bear {{memo.valuation.bear_3y}} · base {{memo.valuation.base_3y}} · bull {{memo.valuation.bull_3y}} (price {{memo.valuation.current_price}}). {{memo.valuation.method}}</p>{% endif %}
 </div>{% endif %}
+{% if memo.bis_scored %}<h2>Business Inflection Score</h2>
+<div class="tablewrap"><table><tr><th>Component</th><th>Points</th></tr>
+{% for k,w in bis_weights.items() %}<tr><td>{{k|replace('_',' ')|capitalize}}</td><td class="num">{{memo.bis_scored.components.get(k, 0)}} / {{w}}</td></tr>{% endfor %}
+<tr><td><strong>Total</strong></td><td class="num"><strong>{{memo.bis_scored.total}}</strong> / 100</td></tr></table></div>
+{% if memo.bis and memo.bis.notes %}<p class="small">{{memo.bis.notes}}</p>{% endif %}{% endif %}
+{% if memo.sector_signals %}<h2>Sector signal convergence {% if memo.convergence %}<span class="pill {{'on' if memo.convergence.passed else 'off'}}">{{'passed' if memo.convergence.passed else 'not passed'}}</span>{% endif %}</h2>
+<div class="tablewrap"><table><tr><th>Signal</th><th>Status</th><th>Source</th><th>Evidence</th></tr>
+{% for x in memo.sector_signals %}<tr><td>{{x.signal}}</td><td><span class="pill {{'on' if x.status=='CONFIRMED' else 'hard' if x.status=='FAILED' else ''}}">{{x.status}}</span></td><td class="small">{{x.source_grade}} · {{x.source_group}}</td><td class="small">{{x.evidence}}</td></tr>{% endfor %}</table></div>
+{% if memo.convergence and memo.convergence.reasons %}<p class="small">{{memo.convergence.reasons|join(' · ')}}</p>{% endif %}{% endif %}
+{% if memo.inflection_tracker %}<h2>Inflection-to-earnings tracker</h2>
+<div class="tablewrap"><table><tr><th>Signal</th><th>First observed</th><th>Expected consequence</th><th>Lag (qtrs)</th><th>Target</th><th>Actual</th><th>Status</th></tr>
+{% for t in memo.inflection_tracker %}<tr><td>{{t.signal}}</td><td class="small">{{t.first_observed or ''}}<br>seen {{t.first_seen|ist('%d %b %Y')}}</td><td class="small">{{t.expected_consequence}}</td><td class="num">{{t.expected_lag_quarters}}</td><td class="small">{{t.target_metric}} {{t.target}}</td><td class="small">{{t.actual or '–'}}</td>
+<td><span class="pill {{'on' if t.status=='CONFIRMED' else 'hard' if t.status=='FAILED' else ''}}">{{t.status}}{% if t.stale %} (stale){% endif %}</span></td></tr>{% endfor %}</table></div>{% endif %}
 <h2>Signal families</h2>
 <div class="tablewrap"><table><tr><th>Family</th><th>Points</th><th>Evidence</th></tr>
 {% for k,w in weights.items() %}<tr><td>{{k|capitalize}}</td><td class="num">{{ (score.families or {}).get(k, '–') }} / {{w}}</td>
@@ -15,18 +34,22 @@
 <div class="grid" style="margin-top:16px">
 <div class="card"><h3>Key risks</h3><ul>{% for r in memo.key_risks or [] %}<li>{{r}}</li>{% endfor %}</ul></div>
 <div class="card"><h3>Kill criteria</h3><ul>{% for r in memo.kill_criteria or [] %}<li>{{r}}</li>{% endfor %}</ul></div>
+{% if memo.add_trim_exit %}<div class="card"><h3>Add / trim / exit</h3><p class="small">Add: {{memo.add_trim_exit.add}}<br>Trim: {{memo.add_trim_exit.trim}}<br>Exit: {{memo.add_trim_exit.exit}}</p>
+{% if memo.extraordinary_claims %}<p class="small">Needs more corroboration: {{memo.extraordinary_claims|join(' · ')}}</p>{% endif %}</div>{% endif %}
 <div class="card"><h3>Open questions</h3><ul>{% for r in memo.open_questions or [] %}<li>{{r}}</li>{% endfor %}</ul>
 {% if memo.guidance_track_record %}<p class="small">Guidance record: {{memo.guidance_track_record}}</p>{% endif %}</div>
 </div>
 <h2 id="redteam">Red team</h2>
 {% if redteam %}<div class="card"><p class="small" style="margin-top:0">{{redteam.verdict}} · score {{redteam.score_before}} → {{redteam.score_after}} · {{redteam.written|ist}}</p>
 <p>{{redteam.bear_case}}</p>
+{% if redteam.closest_false_positive %}<p class="small"><strong>Closest false positive:</strong> {{redteam.closest_false_positive}}</p>{% endif %}
+{% if redteam.answers %}<ul class="small">{% for k,v in redteam.answers.items() %}<li><strong>{{k|replace('_',' ')|capitalize}}:</strong> {{v}}</li>{% endfor %}</ul>{% endif %}
 {% if redteam.missed_risks %}<ul>{% for r in redteam.missed_risks %}<li><span class="pill {{'hard' if r.severity=='high' else 'soft'}}">{{r.severity}}</span> {{r.risk}} <span class="small">· {{r.evidence}}</span></li>{% endfor %}</ul>{% endif %}
 {% if redteam.weak_evidence %}<p class="small">Weak evidence: {{redteam.weak_evidence|join(' · ')}}</p>{% endif %}</div>
 {% else %}<div class="card empty">{% if score.redteam_needed %}Waiting for the red-team agent.{% else %}Not needed below tier B.{% endif %}</div>{% endif %}
 <h2>Extracted facts</h2>
 {% if facts %}<div class="tablewrap"><table><tr><th>Type</th><th>Statement</th><th>Period</th><th>Source</th></tr>
-{% for f in facts %}<tr><td><span class="pill">{{f.type}}</span></td><td>{{f.statement}}</td><td class="small">{{f.period or ''}}</td><td class="small">{{f.filing_id}}{% if f.page %} p.{{f.page}}{% endif %}</td></tr>{% endfor %}</table></div>
+{% for f in facts %}<tr><td><span class="pill">{{f.type}}</span></td><td>{{f.statement}}</td><td class="small">{{f.period or ''}}</td><td class="small">{% if f.source_grade %}{{f.source_grade}} · {% endif %}{% if f.source_url %}<a class="ext" href="{{f.source_url}}" rel="noopener" target="_blank">{{f.filing_id}}</a>{% else %}{{f.filing_id}}{% endif %}{% if f.page %} p.{{f.page}}{% endif %}{% if f.published %}<br>published {{f.published}}{% endif %}</td></tr>{% endfor %}</table></div>
 {% else %}<div class="card empty">No extracted facts yet.</div>{% endif %}
 {% if history|length > 1 %}<h2>Score history</h2><p class="small">{% for h in history %}{{h.written|ist('%d %b %Y')}}: {{h.score.score}} ({{h.score.tier}}){{ ' · ' if not loop.last }}{% endfor %}</p>{% endif %}
 {% endblock %}

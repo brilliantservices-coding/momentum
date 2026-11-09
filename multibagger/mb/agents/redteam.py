@@ -6,10 +6,22 @@ from ..rules import tier_for
 from ..store import now_iso
 from ._context import GROUND_RULES, company_record, compact, per_run
 
-PROMPT = """You are the red team. The analyst scored {symbol} at {score} (tier {tier}). Your job is to find what
-the analyst missed: accounting quality, governance, customer concentration, competition, cyclicality
-mistaken for growth, valuation already pricing the bull case, liquidity, story-stock signs (theme
-attached to tiny revenue), and whether the kill criteria are observable.
+PROMPT = """You are the red team. The analyst scored {symbol} at {score} (tier {tier}). No stock passes without an
+explicit bear case. Find what the analyst missed, testing the sector playbook's disqualifiers first, and answer:
+1. What historical false positive most resembles this company (e.g. YES Bank: fast loan growth with tiny
+   reported NPAs; Graphite India: peak-cycle margins; Manpasand: audited growth without cash or distribution
+   corroboration)?
+2. Could growth be price rather than volume?
+3. Could margins be cyclical rather than structural?
+4. Could reported ROE be leverage or delayed recognition?
+5. Could capex be speculative rather than demand-backed?
+6. Could the order book be low-margin, cancellable or working-capital intensive?
+7. Could a second growth engine cannibalise the first?
+8. What evidence would falsify the moat?
+9. Which assumption contributes most to the valuation?
+10. Which claim depends on management rather than independent evidence?
+Also check accounting quality, governance, customer concentration, liquidity, story-stock signs (theme
+attached to tiny revenue) and whether the kill criteria are observable.
 
 Analyst memo:
 {memo}
@@ -17,8 +29,12 @@ Analyst memo:
 Company record:
 {record}
 
-Return {{"bear_case": "3-5 sentences", "missed_risks": [{{"risk": "...", "evidence": "source: claim",
-"severity": "high|medium|low"}}], "weak_evidence": ["claims in the memo not supported by the record"],
+Return {{"bear_case": "3-5 sentences", "closest_false_positive": "name and why",
+"answers": {{"price_vs_volume": "...", "cyclical_margins": "...", "leverage_or_recognition": "...",
+"speculative_capex": "...", "order_book_quality": "...", "cannibalisation": "...", "moat_falsifier": "...",
+"key_valuation_assumption": "...", "management_dependent_claims": "..."}},
+"missed_risks": [{{"risk": "...", "evidence": "source: claim", "severity": "high|medium|low"}}],
+"weak_evidence": ["claims in the memo not supported by the record"],
 "score_adjustment": n (0 to -15; negative lowers the score), "verdict": "hold score|lower score|reject"}}"""
 
 
@@ -59,7 +75,8 @@ def run(store, log) -> dict:
             break
         adj = max(-15.0, min(0.0, float(out.get("score_adjustment") or 0)))
         new = 0.0 if out.get("verdict") == "reject" else max(0.0, round(float(s.get("score") or 0) + adj, 1))
-        tier = "Reject" if out.get("verdict") == "reject" else tier_for(new, len(s.get("unverified") or []))
+        tier = "Reject" if out.get("verdict") == "reject" else tier_for(new, len(s.get("unverified") or []),
+                                                                             s.get("gates"))
         stamp = now_iso()
         store.set("redteam", sym, {"symbol": sym, **out, "score_before": s.get("score"), "score_after": new,
                                    "written": stamp, "inputs_hash": key})

@@ -8,16 +8,45 @@ def _get(m, k):
     return m.get(k)
 
 
+def inflection(m: dict) -> dict:
+    """Strategy v2 change-variable screen: is the business entering an inflection (from annual statements)?"""
+    acc, md, inc = m.get("revenue_acceleration"), m.get("margin_delta"), m.get("incremental_roce")
+    s2c = m.get("sales_to_capital_delta")
+    signals = []
+    if acc is not None and acc >= 10:
+        signals.append(f"revenue growth accelerated {acc:+.0f} pts")
+    if md is not None and md >= 2:
+        signals.append(f"EBITDA margin up {md:+.1f} pts")
+    if inc is not None and inc >= 25:
+        signals.append(f"incremental ROCE {inc:.0f}%")
+    if s2c is not None and s2c >= 0.15:
+        signals.append(f"sales/capital up {s2c:+.2f}")
+    return {"inflection_candidate": len(signals) >= 2, "trigger_events": signals}
+
+
 def pass1(m: dict) -> dict:
-    """Returns {rule: True|False|None}, gates and an overall verdict for one company."""
+    """Returns {rule: True|False|None}, gates and an overall verdict for one company.
+
+    Strategy v2: sector-aware. Lenders skip cash-conversion and leverage tests; cyclicals are judged on
+    mid-cycle (3-year average) ROCE, not spot P/E; a documented inflection can stand in for 3-year growth.
+    Pass 1 ranks the research queue (research_priority); it never approves an investment.
+    """
+    from .playbooks import classify
     g = lambda k: _get(m, k)  # noqa: E731
     rules: dict[str, bool | None] = {}
+    pb = classify(m)
+    lender, cyclical = pb["playbook"] == "lender" or is_financial(m), pb["playbook"] == "cyclical"
+    inf = inflection(m)
 
     s3, q = g("sales_cagr_3y"), g("qtr_sales_yoy")
-    rules["growth"] = None if s3 is None and q is None else bool((s3 or -1e9) >= 15 or (q or -1e9) >= 25)
+    rules["growth"] = None if s3 is None and q is None and not inf["inflection_candidate"] else bool(
+        (s3 or -1e9) >= 15 or (q or -1e9) >= 25 or inf["inflection_candidate"])
 
     roce, roce_avg = g("roce"), g("roce_3y_avg")
-    rules["roce"] = None if roce is None else bool(roce >= 15 or (roce_avg is not None and roce >= 10 and roce - roce_avg >= 5))
+    if cyclical:
+        rules["roce"] = None if roce_avg is None else bool(roce_avg >= 15)
+    else:
+        rules["roce"] = None if roce is None else bool(roce >= 15 or (roce_avg is not None and roce >= 10 and roce - roce_avg >= 5))
 
     cfo, ebitda3 = g("cfo_3y"), g("ebitda_3y")
     rules["cash_conversion"] = None if cfo is None or not ebitda3 or is_financial(m) else bool(ebitda3 > 0 and cfo / ebitda3 >= 0.7)
@@ -31,14 +60,14 @@ def pass1(m: dict) -> dict:
     sn, s3b = g("shares_now"), g("shares_3y_back")
     if lev is not None and sn and s3b:
         lev = lev and (sn / s3b - 1) < 0.10
-    rules["balance_sheet"] = None if lev is None else bool(lev)
+    rules["balance_sheet"] = None if lev is None or lender else bool(lev)
 
     prom, pledge, pch = g("promoter"), g("pledge"), g("promoter_change")
     rules["promoter"] = None if prom is None else bool(prom > 40 and (pledge or 0) < 5 and (pch or 0) >= 0)
 
     pe = g("pe")
     growth = g("profit_cagr_3y") if g("profit_cagr_3y") is not None else s3
-    rules["valuation"] = None if pe is None or growth is None else bool(0 < pe <= max(growth, 0) * 1.5)
+    rules["valuation"] = None if pe is None or growth is None or cyclical else bool(0 < pe <= max(growth, 0) * 1.5)
 
     dd, dd3 = g("debtor_days"), g("debtor_days_3y_back")
     rules["working_capital"] = None if dd is None or dd3 is None else bool(dd <= dd3 * 1.1 + 5)
@@ -52,7 +81,12 @@ def pass1(m: dict) -> dict:
     met = sum(known)
     need = max(4, math.ceil(0.7 * len(known)))  # "most of these, not necessarily all"
     passed = len(known) >= 4 and met >= need and all(v is not False for v in gates.values())
-    return {"rules": rules, "gates": gates, "met": met, "known": len(known), "passed": passed}
+    review = not passed and all(v is not False for v in gates.values()) and (inf["inflection_candidate"] or len(known) < 4)
+    priority = 10 * met - 5 * (len(known) - met) + (15 if inf["inflection_candidate"] else 0) + 3 * len(inf["trigger_events"])
+    missing = [k for k, v in rules.items() if v is None]
+    return {"rules": rules, "gates": gates, "met": met, "known": len(known), "passed": passed,
+            "screen_status": "PASS" if passed else "REVIEW" if review else "FAIL", **pb, **inf,
+            "research_priority": priority, "missing_critical_fields": missing}
 
 
 FINANCIAL_WORDS = ("bank", "financ", "nbfc", "insurance", "broker", "capital market", "asset management",
@@ -135,17 +169,78 @@ def filing_flags(text: str) -> list[dict]:
 # ---- Conviction score (strategy doc: "Combining signals into a confidence score") ----
 WEIGHTS = {"theme": 15, "financial": 20, "management": 20, "visibility": 15, "ecosystem": 10,
            "valuation": 10, "governance": 10}
-TIERS = [(75, "A"), (62, "B"), (52, "C")]
+TIERS = [(75, "A"), (62, "B"), (52, "C"), (50, "Research")]  # Research: no capital, re-screen later
+RULES_VERSION = "v2-2026-11-08"
+CONFIDENCE = ["Low", "Moderate", "High"]
 SIZING = {"A": (4.0, 8.0), "B": (2.5, 5.0), "C": (1.0, 2.0)}  # starter %, max % of portfolio (cost)
 STRONG_SHARE = 0.6      # a family is strong at 60%+ of its weight (and verified)
 UNVERIFIED_SHARE = 0.5  # a family with no usable evidence gets half its weight
 SOFT_FLAG_COST = 3
 
 
-def tier_for(score: float, unverified: int = 0) -> str:
-    """Tier from the score; two or more unverified families cap it at C."""
+def tier_for(score: float, unverified: int = 0, gates: dict | None = None) -> str:
+    """Tier from the score; two or more unverified families cap it at C; failed tier gates downgrade it."""
     tier = next((t for cut, t in TIERS if score >= cut), "Reject")
-    return "C" if unverified >= 2 and tier in ("A", "B") else tier
+    if unverified >= 2 and tier in ("A", "B"):
+        tier = "C"
+    if gates is not None:
+        if tier == "A" and not gates.get("a_ok"):
+            tier = "B"
+        if tier == "B" and not gates.get("b_ok"):
+            tier = "C"
+    return tier
+
+
+def convergence(signals: list) -> dict:
+    """Sector Signal Convergence Test: 3+ confirmed signals from 2+ independent source groups, none failed,
+    and at least one confirmed from a primary filing (P1)."""
+    confirmed = [x for x in signals or [] if str(x.get("status", "")).upper() == "CONFIRMED"]
+    groups = {str(x.get("source_group") or x.get("source") or i).strip().lower() for i, x in enumerate(confirmed)}
+    failed = [x.get("signal") for x in signals or [] if str(x.get("status", "")).upper() == "FAILED"]
+    p1 = any(str(x.get("source_grade", "")).upper() == "P1" for x in confirmed)
+    passed = len(confirmed) >= 3 and len(groups) >= 2 and not failed and p1
+    why = []
+    if len(confirmed) < 3:
+        why.append(f"{len(confirmed)} confirmed signals (needs 3)")
+    if len(groups) < 2:
+        why.append(f"{len(groups)} independent source groups (needs 2)")
+    if failed:
+        why.append("failed: " + ", ".join(str(f) for f in failed))
+    if not p1:
+        why.append("no confirmed signal from a primary filing")
+    return {"passed": passed, "confirmed": len(confirmed), "source_groups": len(groups), "failed": failed,
+            "reasons": why}
+
+
+def evidence_confidence(model_says: str | None, unverified: int, conv: dict) -> str:
+    """Evidence Confidence, separate from the score: the model's rating, capped by what the record shows.
+    Share of weight in verified families stands in for evidence coverage (80% High, 60% Moderate)."""
+    cap = "High"
+    if unverified >= 3:
+        cap = "Low"
+    elif unverified >= 1 or not conv.get("passed"):
+        cap = "Moderate"
+    said = model_says if model_says in CONFIDENCE else "Low"
+    return min(said, cap, key=CONFIDENCE.index)
+
+
+def tier_gates(score: dict, confidence: str, conv: dict, base_multiple, hard_flags: int = 0) -> dict:
+    """Strategy v2 tier gates. A: High confidence, convergence passed, 5+ families at 60%+, base-case 3-year
+    value 2.5x+ and no hard flag. B: at least Moderate confidence and no hard flag. Failing a gate downgrades."""
+    a_why = []
+    if confidence != "High":
+        a_why.append(f"evidence confidence {confidence}")
+    if not conv.get("passed"):
+        a_why.append("sector convergence not passed")
+    if (score.get("strong_families") or 0) < 5:
+        a_why.append(f"{score.get('strong_families') or 0} families at 60%+ (needs 5)")
+    if base_multiple is None or base_multiple < 2.5:
+        a_why.append("base-case 3-year value below 2.5x" if base_multiple is not None else "no base-case value")
+    if hard_flags:
+        a_why.append("hard red flag")
+    b_ok = CONFIDENCE.index(confidence) >= 1 and not hard_flags
+    return {"a_ok": not a_why, "b_ok": b_ok, "a_missing": a_why,
+            "b_missing": [] if b_ok else [f"evidence confidence {confidence} (needs Moderate)"]}
 
 
 def conviction(families: dict, hard_flags: int = 0, soft_flags: int = 0, unverified=()) -> dict:

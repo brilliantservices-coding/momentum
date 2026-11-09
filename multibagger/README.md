@@ -74,6 +74,19 @@ Agents 6-10 shipped **paused**; run each once from the portal, check its output,
   weight. Strong means 60%+ of weight and verified: +5 when 5+ families are strong, capped at 60 when fewer
   than 3 are. Each soft flag costs 3 points, 3+ soft flags or a hard flag zero the score. Tiers: A ≥75,
   B 62-74, C 52-61, and 2+ unverified families cap the tier at C (revised 8 Nov 2026).
+- **Strategy v2** (8 Nov 2026, "Updated Multibagger Hunting Strategy"):
+  - Pass 1 is sector-aware (`mb/playbooks.py`: 16 playbooks from sector/industry). Lenders skip cash-conversion
+    and leverage tests, cyclicals use mid-cycle ROCE and no spot P/E, and change variables from the annual
+    statements (revenue acceleration, margin delta, incremental ROCE, sales/capital delta) flag inflection
+    candidates. `research_priority` ranks the queue; it never sizes a position.
+  - The analyst (`mb/scoring.py`) also returns a Business Inflection Score (0-100, diagnostic), the
+    playbook's sector signals with source grades P1-P6, an Inflection-to-Earnings tracker (stale
+    expectations become FAILED and cost visibility points) and Evidence Confidence (High/Moderate/Low).
+  - Tier gates: A needs 75+, High confidence, sector convergence (3+ confirmed signals, 2+ source groups,
+    one P1, none failed), 5+ strong families and a 2.5x base case, otherwise B. B needs at least Moderate
+    confidence, otherwise C. Research 50-51 gets no capital. Reject is below 50.
+  - The red team answers the strategy's ten bear-case questions and names the closest false positive.
+    Extracted facts carry provenance (P1, publication date, source link, model version).
 - **Sizing** (`rules.SIZING`): starter / max % of portfolio at cost, A 4/8, B 2.5/5, C 1/2, at most 25 names.
 
 ### AI layer (`mb/llm.py`)
