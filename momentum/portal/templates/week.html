@@ -1,4 +1,4 @@
-{% extends "base.html" %}{% from "_macros.html" import inr, pct, regime_pill %}{% block body %}
+{% extends "base.html" %}{% from "_macros.html" import inr, pct, regime_pill, stock %}{% block body %}
 <h1>Week ending {{w.week}} <span class="pill {{w.status}}">{{w.status|replace('_',' ')}}</span></h1>
 <p class="sub">Regime {{ regime_pill(w.regime.regime) }} · {{w.counts.passing}} stocks pass every filter · data as of {{w.data_as_of}} · quality data: {{w.quality_source}}</p>
 <div class="grid">
@@ -17,7 +17,7 @@
 {% for c in w.changes %}{% set pending = w.status=='pending' %}{% set dec = (w.decisions or {}).get(c.id, {}) %}
 <tr><td data-label="OK">{% if pending %}<input type="checkbox" name="ok_{{c.id}}" checked aria-label="approve {{c.symbol}}">{% else %}{{ '<span class="tick">✓</span>'|safe if c.id in (w.applied or []) else '<span class="cross">✗</span>'|safe }}{% endif %}</td>
 <td data-label="Action"><span class="pill act-{{c.type}}">{{ {'buy':'Buy','sell':'Sell','trim':'Trim','raise_stop':'Raise stop','park':'Park cash','unpark':'Unpark'}[c.type] }}</span></td>
-<td data-label="Stock"><strong>{{c.symbol}}</strong>{% if c.sector %}<div class="small">{{c.sector}}</div>{% endif %}{% if c.rank %}<div class="small">rank {{c.rank}}</div>{% endif %}</td>
+<td data-label="Stock">{{ stock(c.symbol, True) }}{% if c.sector %}<div class="small">{{c.sector}}</div>{% endif %}{% if c.rank %}<div class="small">rank {{c.rank}}</div>{% endif %}</td>
 <td data-label="Qty" class="num">{% if pending and c.type!='raise_stop' %}<input type="text" name="qty_{{c.id}}" value="{{c.qty}}" size="5" inputmode="numeric">{% else %}{{dec.qty or c.qty}}{% endif %}</td>
 <td data-label="Price" class="num">{% if pending and c.type!='raise_stop' %}<input type="text" name="price_{{c.id}}" value="{{c.price}}" size="8" inputmode="decimal" title="Enter your actual fill price">{% else %}{{dec.price or c.price}}{% endif %}
 {% if c.pnl_pct is not none and c.type=='sell' %}<div class="small">{{ pct(c.pnl_pct) }} vs entry {{c.entry}}</div>{% endif %}</td>
@@ -35,14 +35,14 @@
 {% else %}<div class="card empty">No changes proposed this week. {% if w.status=='pending' %}<form method="post" action="/weeks/{{w.week}}/signoff"><input type="hidden" name="note" value="no changes"><button class="primary" name="action" value="signoff">Sign off (no changes)</button></form>{% endif %}</div>{% endif %}
 
 {% if w.holds %}<h2>Holdings kept</h2><div class="tablewrap"><table><thead><tr><th>Stock</th><th>Close</th><th>P&amp;L</th><th>Stop</th><th>Rank</th></tr></thead><tbody>
-{% for h in w.holds %}<tr><td>{{h.symbol}}</td><td class="num">{{h.close or '–'}}</td><td class="num">{{ pct(h.pnl_pct) }}</td><td class="num">{{h.stop or '–'}}</td><td class="num">{{h.rank or h.note}}</td></tr>{% endfor %}</tbody></table></div>{% endif %}
+{% for h in w.holds %}<tr><td>{{ stock(h.symbol) }}</td><td class="num">{{h.close or '–'}}</td><td class="num">{{ pct(h.pnl_pct) }}</td><td class="num">{{h.stop or '–'}}</td><td class="num">{{h.rank or h.note}}</td></tr>{% endfor %}</tbody></table></div>{% endif %}
 
 {% if w.watchlist %}<h2>Watchlist (top ranked, no valid entry this week)</h2><div class="tablewrap"><table><thead><tr><th>Rank</th><th>Stock</th><th>Close</th><th>RS rating</th><th>Why not a buy</th></tr></thead><tbody>
-{% for s in w.watchlist %}<tr><td class="num">{{s.rank}}</td><td>{{s.symbol}}<div class="small">{{s.sector}}</div></td><td class="num">{{s.close}}</td><td class="num">{{s.rs_rating}}</td><td>{{s.note}}</td></tr>{% endfor %}</tbody></table></div>{% endif %}
+{% for s in w.watchlist %}<tr><td class="num">{{s.rank}}</td><td>{{ stock(s.symbol) }}<div class="small">{{s.sector}}</div></td><td class="num">{{s.close}}</td><td class="num">{{s.rs_rating}}</td><td>{{s.note}}</td></tr>{% endfor %}</tbody></table></div>{% endif %}
 
 <h2>Ranking (stocks passing every filter)</h2>
 {% if w.ranking %}<div class="tablewrap"><table><thead><tr><th>#</th><th>Stock</th><th>Sector</th><th>Close</th><th>Score</th><th>RS 55</th><th>RS 123</th><th>RS rating</th><th>Weekly RSI</th></tr></thead><tbody>
-{% for r in w.ranking %}<tr{% if r.held %} class="held"{% endif %}><td class="num">{{r.rank}}</td><td>{{r.symbol}}{% if r.held %} <span class="pill">held</span>{% endif %}</td><td class="small">{{r.sector}}</td><td class="num">{{r.close}}</td><td class="num">{{r.score}}</td><td class="num">{{ pct(r.rs55) }}</td><td class="num">{{ pct(r.rs123) }}</td><td class="num">{{r.rs_rating}}</td><td class="num">{{r.rsi_w}}</td></tr>{% endfor %}</tbody></table></div>
+{% for r in w.ranking %}<tr{% if r.held %} class="held"{% endif %}><td class="num">{{r.rank}}</td><td>{{ stock(r.symbol) }}{% if r.held %} <span class="pill">held</span>{% endif %}</td><td class="small">{{r.sector}}</td><td class="num">{{r.close}}</td><td class="num">{{r.score}}</td><td class="num">{{ pct(r.rs55) }}</td><td class="num">{{ pct(r.rs123) }}</td><td class="num">{{r.rs_rating}}</td><td class="num">{{r.rsi_w}}</td></tr>{% endfor %}</tbody></table></div>
 {% else %}<div class="card empty">No stock passes every filter this week.</div>{% endif %}
 <p class="small">Also check by hand before buying: NSE ASM/GSM lists, pledging, results dates, and the chart. Add anything to avoid to the exclusion list in Settings.</p>
 {% endblock %}

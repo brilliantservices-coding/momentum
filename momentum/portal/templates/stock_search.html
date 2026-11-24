@@ -1,0 +1,9 @@
+{% extends "base.html" %}{% from "_macros.html" import stock %}{% block body %}
+<h1>Find a stock</h1>
+<form method="get" action="/stock" class="row" style="margin-bottom:16px"><input type="search" name="q" value="{{q}}" placeholder="Symbol or sector, e.g. TCS or Pharma" style="min-width:260px" autofocus><button class="primary">Search</button></form>
+{% if q %}{% if hits %}<p class="sub">{{hits|length}} match{{'es' if hits|length != 1}} in the week ending {{week.week}}'s screen.</p>
+<div class="tablewrap"><table><thead><tr><th>Stock</th><th>Rank</th><th>Filters passed</th><th>Close</th></tr></thead><tbody>
+{% for r in hits %}<tr><td>{{ stock(r.s, True) }}<div class="small">{{r.sec}}</div></td><td class="num">{{r.rank or '–'}}</td><td class="num">{{ r.f.count('1') }} / {{r.f|length}}</td><td class="num">{{r.close}}</td></tr>{% endfor %}
+</tbody></table></div>
+{% else %}<div class="card empty">No Nifty 500 stock matches “{{q}}”. <a href="/stock/{{ q|trim|upper|urlencode }}">Open {{q|trim|upper}} anyway</a> (book, Zerodha and Yahoo links only).</div>{% endif %}{% endif %}
+{% endblock %}

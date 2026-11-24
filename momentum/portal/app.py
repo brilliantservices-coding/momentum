@@ -15,7 +15,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from mom import control, kite, orders as morders, reconcile as mrecon
+from mom import control, kite, orders as morders, reconcile as mrecon, stockview
 from mom.book import get_book, get_cfg, sign_off
 from mom.config import BOOK, DEFAULTS, REGIME_EXPOSURE, settings
 from mom.store import get_store, now_iso
@@ -391,6 +391,50 @@ def orders_refresh(request: Request):
     except kite.RelayError as exc:
         return back("/reconcile", f"Could not check orders: {exc}")
     return back("/reconcile", f"Checked {n} open order(s).")
+
+
+SYM_OK = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789&-")
+
+
+@app.get("/stock", response_class=HTMLResponse)
+def stock_search(request: Request, q: str = ""):
+    store = get_store()
+    week = _latest_week(store)
+    screen = store.get("mom_screens", week["week"]) if week else None
+    hits = stockview.search((screen or {}).get("rows", []), q)
+    sym = q.strip().upper()
+    if hits and hits[0]["s"] == sym:
+        return RedirectResponse(f"/stock/{quote(sym, safe='')}", status_code=303)
+    return render(request, "stock_search.html", q=q, hits=hits, week=week)
+
+
+@app.get("/stock/{sym}", response_class=HTMLResponse)
+def stock_page(request: Request, sym: str):
+    sym = sym.strip().upper()
+    if not sym or len(sym) > 20 or not set(sym) <= SYM_OK:
+        raise HTTPException(404)
+    store = get_store()
+    cfg = get_cfg(store)
+    weeks = store.list("mom_weeks", order_by="week", limit=8)
+    week = weeks[0] if weeks else None
+    screen = store.get("mom_screens", week["week"]) if week else None
+    v = stockview.view(sym, week, screen, cfg)
+    history = []
+    for w in weeks:
+        sc = screen if w is week else store.get("mom_screens", w["week"])
+        r = next((x for x in (sc or {}).get("rows", []) if x["s"] == sym), None)
+        if r:
+            history.append({"week": w["week"], "rank": r.get("rank"), "nfail": r.get("nfail"), "close": r.get("close"),
+                            "setup": r.get("setup")})
+    data, last = _recon(store)
+    recon = next((x for x in data["rows"] if x["symbol"] == sym), None)
+    pos = get_book(store).get("positions", {}).get(sym)
+    changes = [c for c in (week or {}).get("changes", []) if c["symbol"] == sym]
+    journal = [j for j in store.list("mom_journal", where=[("symbol", "==", sym)])]
+    journal.sort(key=lambda j: j.get("at", ""), reverse=True)
+    orders = [o for o in store.list("mom_orders", order_by="at", limit=100) if o.get("symbol") == sym]
+    return render(request, "stock.html", v=v, week=week, history=history, recon=recon, pos=pos, changes=changes,
+                  journal=journal[:30], orders=orders, checked_at=last.get("check_at"))
 
 
 @app.get("/api/weeks/{wid}")
