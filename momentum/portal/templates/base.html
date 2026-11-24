@@ -3,6 +3,7 @@
 <body><header><div class="wrap top"><div class="brand">Momentum<small>weekly · India</small></div>
 <nav>{% for href,label in [("/","This week"),("/weeks","History"),("/book","Book"),("/reconcile","Reconcile"),("/runs","Runs"),("/zerodha","Zerodha"),("/settings","Settings")] %}
 <a href="{{href}}" class="{{'on' if nav==href or (href!='/' and nav.startswith(href)) }}">{{label}}</a>{% endfor %}</nav>
+<form class="search" method="get" action="/stock" role="search"><input type="search" name="q" placeholder="Find a stock" aria-label="Find a stock" autocomplete="off"></form>
 <div class="user">{{user}}</div></div></header>
 <main class="wrap">
 {% if msg %}<div class="flash">{{msg}}</div>{% endif %}

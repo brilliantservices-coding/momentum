@@ -1,0 +1,55 @@
+{% extends "base.html" %}{% from "_macros.html" import inr, pct, regime_pill %}{% block title %}{{v.symbol}} · Momentum{% endblock %}{% block body %}
+<h1>{{v.symbol}}{% if v.row %} <span class="small">{{v.row.sec}}</span>{% endif %}</h1>
+<p class="sub"><a href="{{v.links.yahoo}}" target="_blank" rel="noopener">Yahoo Finance ↗</a> · <a href="{{v.links.screener}}" target="_blank" rel="noopener">Screener.in ↗</a> · <a href="{{v.links.tradingview}}" target="_blank" rel="noopener">TradingView chart ↗</a>
+{% if week %} · week ending {{week.week}}, regime {{ regime_pill(week.regime.regime) }}{% endif %}</p>
+
+{% if not v.in_universe %}<div class="card empty">{{v.symbol}} is not in this week's Nifty 500 screen{% if not week %} (no weekly run yet){% endif %}, so the strategy has no factor data for it.</div>
+{% else %}{% set r = v.row %}
+<div class="grid">
+<div class="card stat"><div class="n">₹{{r.close}}</div><div class="l">Close, {{week.data_as_of}}</div></div>
+<div class="card stat"><div class="n">{{ r.rank or '–' }}</div><div class="l">Rank among stocks passing every filter</div></div>
+<div class="card stat"><div class="n">{{v.passed}} / {{v.total}}</div><div class="l">Filters passed</div></div>
+<div class="card stat"><div class="n">{{v.reached}} / {{v.total}}</div><div class="l">Funnel steps cleared in order</div></div>
+</div>
+
+<h2>How far it got in the funnel</h2>
+<div class="card">
+{% if v.stopped_at %}<p style="margin-top:0">Cleared the first <strong>{{v.reached}}</strong> of {{v.total}} filters and <strong class="cross">left the funnel at “{{v.stopped_at}}”</strong>.{% if v.passed > v.reached %} It passes {{v.passed - v.reached}} of the later filters too, but a stock must pass all of them.{% endif %}</p>
+{% else %}<p style="margin-top:0"><strong class="tick">Passed every filter.</strong></p>{% endif %}
+<div class="tablewrap"><table><thead><tr><th>#</th><th>Filter</th><th>Result</th><th>Value</th><th>Stocks left after this step</th></tr></thead><tbody>
+{% for f in v.factors %}<tr{% if loop.index > v.reached + 1 %} class="dim"{% endif %}><td class="num">{{loop.index}}</td><td>{{f.label}}</td>
+<td>{% if f.ok %}<span class="tick">✓ pass</span>{% else %}<span class="cross">✗ fail</span>{% endif %}{% if loop.index == v.reached + 1 and not f.ok %} <span class="pill">left here</span>{% endif %}</td>
+<td class="small">{{f.value or ''}}</td><td class="num">{{f.left if f.left is not none else ''}}</td></tr>{% endfor %}
+{% for s in v.stages or [] %}<tr><td></td><td>{{s.label}}</td><td>{% if s.ok %}<span class="tick">✓</span>{% else %}<span class="cross">✗</span>{% endif %}</td><td></td><td></td></tr>{% endfor %}
+</tbody></table></div>
+<p class="small" style="margin-bottom:0">Of {{v.universe}} Nifty 500 stocks with prices. <a href="/weeks/{{week.week}}/screen">All stocks on the Screen page</a>.</p>
+</div>
+
+<h2>Key numbers</h2>
+<div class="card small">Turnover {{r.v.turnover_cr}} cr/day · RS rating {{r.v.rs_rating}} · RS 55 {{r.v.rs55}}% · RS 123 {{r.v.rs123}}% · weekly RSI {{r.v.rsi_w}} · daily RSI {{r.v.rsi_d}} · {{r.v.from_high}}% from the 52-week high · {{r.v.above_low}}% above the low · {{r.v.vs50}}% vs 50 DMA · {{r.v.vs200}}% vs 200 DMA · momentum score {{r.score}}
+{% if r.setup %}<br>Entry this week: {{r.setup}}{% endif %}</div>
+
+<h2>Exit rules (if you hold it)</h2>
+<div class="card">{% if v.exit is none %}<span class="small">Exit-rule data appears after the next weekly run.</span>
+{% elif v.exit %}<span class="cross">Sell signal:</span> {{ v.exit|join('; ') }}{% else %}<span class="tick">No exit rule triggered.</span>{% endif %}</div>
+{% endif %}
+
+<h2>In your account</h2>
+<div class="card">
+<p style="margin-top:0">{% if pos %}<strong>{{book_name}} book:</strong> {{pos.qty}} shares at ₹{{pos.entry}}, stop ₹{{pos.stop}}, since {{pos.entry_date}}.{% else %}Not in the {{book_name}} book.{% endif %}</p>
+<p>{% if recon %}<strong>Zerodha:</strong> {{recon.kite_qty}} shares{% if recon.avg %}, average ₹{{recon.avg}}{% endif %}{% if recon.pnl_pct is not none %} ({{ pct(recon.pnl_pct) }}){% endif %}. Suggested: <span class="pill act-{{recon.action|lower}}">{{recon.action}}</span>{% if recon.qty %} {{recon.qty}} sh{% endif %}: {{ recon.reasons|join('; ') }}. <a href="/reconcile">Reconcile</a>
+{% else %}<strong>Zerodha:</strong> {% if checked_at %}not held (holdings read {{checked_at|ist}}).{% else %}holdings not read yet; use Refresh on the <a href="/reconcile">Reconcile</a> page.{% endif %}{% endif %}</p>
+{% if changes %}<p style="margin-bottom:0"><strong>This week's proposal:</strong> {% for c in changes %}{{c.type|replace('_',' ')}} {{c.qty}} ({{ c.reasons|join('; ') }}){{ '; ' if not loop.last }}{% endfor %}. <a href="/weeks/{{week.week}}">Review the week</a></p>{% endif %}
+</div>
+
+{% if history %}<h2>Recent weeks</h2>
+<div class="tablewrap"><table><thead><tr><th>Week ending</th><th>Close</th><th>Rank</th><th>Filters failed</th><th>Entry</th></tr></thead><tbody>
+{% for h in history %}<tr><td><a href="/weeks/{{h.week}}">{{h.week}}</a></td><td class="num">{{h.close}}</td><td class="num">{{h.rank or '–'}}</td><td class="num">{{h.nfail}}</td><td class="small">{{h.setup or ''}}</td></tr>{% endfor %}
+</tbody></table></div>{% endif %}
+
+{% if journal or orders %}<h2>Trades</h2>
+<div class="tablewrap"><table><thead><tr><th>When</th><th>What</th><th>Qty</th><th>Price</th><th>Result</th></tr></thead><tbody>
+{% for o in orders %}<tr><td class="small">{{o.at|ist}}</td><td>order: {{o.side|lower}} <span class="small">{{o.status}}</span></td><td class="num">{{o.qty}}</td><td class="num">{{o.price}}</td><td class="small">{{o.filled_qty or 0}} filled</td></tr>{% endfor %}
+{% for j in journal %}<tr><td class="small">{{j.at|ist}}</td><td>{{j.type|replace('_',' ')}}</td><td class="num">{{j.qty}}</td><td class="num">{{j.price}}</td><td class="num">{% if j.pnl is defined %}{{ inr(j.pnl) }} {{ pct(j.pnl_pct) }}{% endif %}</td></tr>{% endfor %}
+</tbody></table></div>{% endif %}
+{% endblock %}

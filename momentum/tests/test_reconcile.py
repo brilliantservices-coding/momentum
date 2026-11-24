@@ -163,3 +163,19 @@ def test_relay_order(tmp_path, monkeypatch):
     assert c.post("/order", headers=h, json={"symbol": "A;B", "side": "BUY", "qty": 1, "price": 1}).status_code == 400
     assert c.post("/order", json={"symbol": "ABC", "side": "BUY", "qty": 1, "price": 1}).status_code == 401
     assert c.post("/order-status", headers=h, json={"order_id": "123"}).json()["status"] == "COMPLETE"
+
+
+def test_stock_search_and_page(portal):
+    client, sent, store = portal
+    client.post("/reconcile/refresh")
+    r = client.get("/stock?q=good", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/stock/GOOD"
+    page = client.get("/stock/GOOD").text
+    assert "finance.yahoo.com/quote/GOOD.NS" in page and "Passed every filter" in page and "Ranked 2" in page
+    weak = client.get("/stock/WEAK").text
+    assert "left the funnel at “RS 55 vs Nifty above 0”" in weak and "Sell signal" in weak and "Zerodha:</strong> 20 shares" in weak
+    assert "not in this week" in client.get("/stock/NOPE").text
+    assert "NEWONE" in client.get("/stock?q=pharma").text  # sector search
+    assert client.get("/stock/A;B").status_code == 404
+    rec = client.get("/reconcile").text
+    assert 'href="/stock/WEAK"' in rec and 'href="/stock/NEWONE"' in rec

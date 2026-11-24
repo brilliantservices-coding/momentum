@@ -1,4 +1,4 @@
-{% extends "base.html" %}{% block body %}
+{% extends "base.html" %}{% from "_macros.html" import stock %}{% block body %}
 <h1>Screen: week ending {{w.week}}</h1>
 <p class="sub">Every Nifty 500 stock the run looked at, and which factors passed (✓) or failed (✗). Prices up to {{w.data_as_of|ist}} close; run {{w.created|ist}}.</p>
 {% if not screen %}<div class="card empty">This week was run before factor details were recorded. Run the weekly review again from the overview to fill it in.</div>{% else %}
@@ -13,7 +13,7 @@
 {% set short = {"history":"Hist","liquidity":"Liq","above_150":">150","ma150_200":"150>200","ma200_rising":"200↑","above_50":">50","ma50_stack":"50>150","rs_rating":"RSR","near_high":"Hi","off_low":"Lo","rsi_w":"RSIw","rsi_d":"RSId","rs55":"RS55","rs123":"RS123","not_excluded":"Excl","quality":"Qual"} %}
 {% for f in screen.factors %}<th class="fac" title="{{f.label}}">{{short.get(f.key, f.key)}}</th>{% endfor %}<th>Key numbers</th><th>Entry this week</th></tr></thead><tbody>
 {% for r in screen.rows %}<tr data-s="{{r.s}}" data-f="{{r.f}}" data-n="{{r.nfail}}">
-<td><strong>{{r.s}}</strong><div class="small">{{r.sec}}</div></td><td class="num">{{r.rank or ''}}</td><td class="num">{{r.score if r.score is not none else '–'}}</td><td class="num">{{r.nfail}}</td>
+<td>{{ stock(r.s, True) }}<div class="small">{{r.sec}}</div></td><td class="num">{{r.rank or ''}}</td><td class="num">{{r.score if r.score is not none else '–'}}</td><td class="num">{{r.nfail}}</td>
 {% for ch in r.f %}<td class="fc {{'tick' if ch=='1' else 'cross'}}">{{'✓' if ch=='1' else '✗'}}</td>{% endfor %}
 <td class="small nowrap">₹{{r.close}} · {{r.v.turnover_cr}} cr/day<br>RS {{r.v.rs_rating}} · RS55 {{r.v.rs55}}% · RS123 {{r.v.rs123}}%<br>RSI w {{r.v.rsi_w}} / d {{r.v.rsi_d}} · {{r.v.from_high}}% from high</td>
 <td class="small">{{r.setup or ''}}</td></tr>{% endfor %}</tbody></table></div>
