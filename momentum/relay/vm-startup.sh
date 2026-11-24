@@ -14,8 +14,13 @@ BRANCH=$(md instance/attributes/relay-branch || echo main)
 apt-get update -qq && apt-get install -y -qq git python3-venv >/dev/null
 id momrelay >/dev/null 2>&1 || useradd --system --home /opt/mom-relay --shell /usr/sbin/nologin momrelay
 mkdir -p /opt/mom-relay /var/lib/mom-relay
+# The checkout belongs to momrelay but this script runs as root; without this git refuses to touch it
+git config --global --add safe.directory /opt/mom-relay/src
 if [ -d /opt/mom-relay/src/.git ]; then
-  git -C /opt/mom-relay/src fetch -q origin "$BRANCH" && git -C /opt/mom-relay/src checkout -q -B "$BRANCH" "origin/$BRANCH"
+  # separate commands so set -e stops the script on a failed update instead of restarting old code
+  git -C /opt/mom-relay/src fetch -q origin "$BRANCH"
+  git -C /opt/mom-relay/src checkout -q -B "$BRANCH" "origin/$BRANCH"
+  echo "mom-relay: updated to $(git -C /opt/mom-relay/src rev-parse --short HEAD) on $BRANCH"
 else
   git clone -q --branch "$BRANCH" "$REPO" /opt/mom-relay/src
 fi
