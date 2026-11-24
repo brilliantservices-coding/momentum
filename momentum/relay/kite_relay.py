@@ -9,8 +9,10 @@ Endpoints (all POST, JSON):
   /session   {request_token}   -> exchanges the login token for the day's access token
   /check                       -> profile, funds and holdings summary (read-only)
   /test-order {price}          -> 1 x LIQUIDBEES limit buy at a price that cannot fill, cancelled at once
+  /order {symbol, side, qty, price} -> one CNC limit order (an override the owner confirmed in the portal)
+  /order-status {order_id}     -> the order's latest state in Kite
   /status                      -> whether a session for today exists
-Nothing else can place orders.
+Only /test-order and /order can place orders.
 """
 from __future__ import annotations
 
@@ -18,6 +20,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -31,6 +34,8 @@ PROJECT = os.getenv("GOOGLE_CLOUD_PROJECT", "")
 STATE = Path(os.getenv("RELAY_STATE", "/var/lib/mom-relay/session.json"))
 TEST_SYMBOL = "LIQUIDBEES"
 TAG = "Momentum"
+SYMBOL = re.compile(r"^[A-Z0-9&\-]{1,20}$")
+MAX_ORDER_INR = float(os.getenv("RELAY_MAX_ORDER_INR", "1000000"))  # hard ceiling, whatever the portal sends
 IST = timezone(timedelta(hours=5, minutes=30))
 
 app = FastAPI(docs_url=None, redoc_url=None)
@@ -140,8 +145,8 @@ def check(request: Request):
         "cash_available": (margins.get("available") or {}).get("live_balance"),
         "net": margins.get("net"),
         "holdings_count": len(holdings),
-        "holdings": [{"symbol": h.get("tradingsymbol"), "qty": h.get("quantity"),
-                      "avg": h.get("average_price"), "last": h.get("last_price")} for h in holdings][:200],
+        "holdings": [{"symbol": h.get("tradingsymbol"), "qty": h.get("quantity"), "t1_qty": h.get("t1_quantity") or 0,
+                      "avg": h.get("average_price"), "last": h.get("last_price")} for h in holdings][:500],
         "egress_ip": ip,
     }
 
@@ -184,3 +189,42 @@ async def test_order(request: Request):
     return {"order_id": oid, "variety": variety, "price": price, "final_status": final, "steps": steps,
             "history": statuses, "ok": final in ("CANCELLED", "REJECTED") or cancel_error is None,
             "filled": final == "COMPLETE"}
+
+
+def _state(tok: str, oid: str) -> dict:
+    history = _kite("GET", f"/orders/{oid}", tok)
+    last = history[-1] if history else {}
+    return {"order_id": oid, "status": last.get("status"), "message": last.get("status_message"),
+            "filled_qty": last.get("filled_quantity") or 0, "avg_price": last.get("average_price") or None}
+
+
+@app.post("/order")
+async def order(request: Request):
+    """One delivery (CNC) limit order, tagged Momentum. Regular in market hours, AMO otherwise."""
+    _auth(request)
+    b = await request.json()
+    sym, side = str(b.get("symbol", "")).upper(), str(b.get("side", "")).upper()
+    try:
+        qty, price = int(b.get("qty") or 0), round(float(b.get("price") or 0), 2)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "qty and price must be numbers")
+    if not SYMBOL.match(sym) or side not in ("BUY", "SELL") or not 1 <= qty <= 100000 or price <= 0:
+        raise HTTPException(400, "need symbol, side BUY or SELL, qty and a limit price")
+    if qty * price > MAX_ORDER_INR:
+        raise HTTPException(400, f"order value above the relay limit of {MAX_ORDER_INR:,.0f}")
+    tok = _session()["access_token"]
+    variety = "regular" if _market_open(datetime.now(IST)) else "amo"
+    placed = _kite("POST", f"/orders/{variety}", tok, data={
+        "exchange": "NSE", "tradingsymbol": sym, "transaction_type": side, "order_type": "LIMIT",
+        "quantity": qty, "price": price, "product": "CNC", "validity": "DAY", "tag": TAG})
+    time.sleep(1.5)
+    return {**_state(tok, placed["order_id"]), "variety": variety}
+
+
+@app.post("/order-status")
+async def order_status(request: Request):
+    _auth(request)
+    oid = str((await request.json()).get("order_id", ""))
+    if not oid.isalnum() or len(oid) > 32:
+        raise HTTPException(400, "missing order_id")
+    return _state(_session()["access_token"], oid)

@@ -49,6 +49,7 @@ DEFAULTS = {
     "exclude": "",               # symbols to never buy (ASM/GSM, red flags), comma separated
     "park_in_liquid": 1,         # 1 = park idle cash in LIQUIDBEES, 0 = keep it as cash
     "cash_buffer_pct": 1.0,      # % of the book kept as plain cash for charges and rounding
+    "max_order_inr": 300_000.0,  # largest single override order the portal will send to Zerodha
 }
 REGIME_EXPOSURE = {"green": 1.0, "amber": 0.55, "red": 0.20}
 REGIME_LEVEL = {"red": 0, "amber": 1, "green": 2}

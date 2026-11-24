@@ -3,6 +3,7 @@
 <p class="sub">Every Nifty 500 stock the run looked at, and which factors passed (✓) or failed (✗). Prices up to {{w.data_as_of|ist}} close; run {{w.created|ist}}.</p>
 {% if not screen %}<div class="card empty">This week was run before factor details were recorded. Run the weekly review again from the overview to fill it in.</div>{% else %}
 {% set week = w %}{% include "_funnel.html" %}
+<p class="small">To buy or sell any stock that passes every filter, regardless of the regime, use <a href="/reconcile">Reconcile</a> (override orders).</p>
 <div class="row" style="margin:16px 0 10px;align-items:center">
 <input type="text" id="q" placeholder="Find a stock" style="min-width:160px">
 <select id="view"><option value="all">All stocks</option><option value="pass">Passed every filter</option><option value="near">Near misses (failed 1)</option><option value="near2">Failed 2 or fewer</option>

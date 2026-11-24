@@ -102,6 +102,28 @@ def rank_universe(m: pd.DataFrame, cfg: dict, quality: dict | None = None, secto
     return m
 
 
+def exit_reasons(r, cfg: dict, sym: str) -> list[str]:
+    """The exit rules that do not depend on a position's own stop or entry. `r` is a metrics row
+    (or the `x` record a screen row keeps), so held stocks outside the book can be judged too."""
+    out = []
+    if r["w_close"] < r["ma30w"]:
+        out.append("weekly close below the 30-week MA (Stage 3/4)")
+    elif r["ma30w"] < r["ma30w_prev"]:
+        out.append("30-week MA has turned down")
+    if r["rs55"] < 0 and r["rs55_prev"] < 0 and r["w_close"] < r["ma10w"]:
+        out.append("RS 55 below 0 two weeks running and price under the 10-week MA")
+    if r["rsi_w"] < 40:
+        out.append(f"weekly RSI {r['rsi_w']:.0f} below 40")
+    if r["rank_if_held"] > cfg["exit_rank"]:
+        out.append(f"rank {int(r['rank_if_held'])} is below the exit line of {cfg['exit_rank']}")
+    if sym in _excluded(cfg):
+        out.append("on your exclusion list")
+    return out
+
+
+EXIT_FIELDS = ("w_close", "ma30w", "ma30w_prev", "rs55", "rs55_prev", "ma10w", "rsi_w", "rank_if_held")
+
+
 def funnel(m: pd.DataFrame) -> list[dict]:
     """Stocks left after each filter, applied in order, plus how many fail each filter on its own."""
     alive = pd.Series(True, index=m.index)
@@ -130,6 +152,8 @@ def screen_rows(m: pd.DataFrame, setups: dict[str, str] | None = None) -> list[d
                   "above_low": _f(100 * (r["close"] / r["lo52"] - 1), 1),
                   "vs50": _f(100 * (r["close"] / r["sma50"] - 1), 1), "vs200": _f(100 * (r["close"] / r["sma200"] - 1), 1)},
             "setup": (setups or {}).get(s),
+            # raw inputs of the exit rules, so the Reconcile page can judge any held stock
+            "x": {k: _f(r[k], 4) for k in EXIT_FIELDS if k in r.index},
         })
     rows.sort(key=lambda x: (x["rank"] is None, x["rank"] or 0, x["nfail"], -(x["score"] or -99)))
     return rows
@@ -180,18 +204,7 @@ def propose(m: pd.DataFrame, book: dict, reg: dict, cfg: dict, today: date | Non
         reasons = []
         if r["w_low"] <= p["stop"]:
             reasons.append(f"stop {p['stop']:.1f} hit (low {r['w_low']:.1f})")
-        if r["w_close"] < r["ma30w"]:
-            reasons.append("weekly close below the 30-week MA (Stage 3/4)")
-        elif r["ma30w"] < r["ma30w_prev"]:
-            reasons.append("30-week MA has turned down")
-        if r["rs55"] < 0 and r["rs55_prev"] < 0 and r["w_close"] < r["ma10w"]:
-            reasons.append("RS 55 below 0 two weeks running and price under the 10-week MA")
-        if r["rsi_w"] < 40:
-            reasons.append(f"weekly RSI {r['rsi_w']:.0f} below 40")
-        if r["rank_if_held"] > cfg["exit_rank"]:
-            reasons.append(f"rank {int(r['rank_if_held'])} is below the exit line of {cfg['exit_rank']}")
-        if sym in _excluded(cfg):
-            reasons.append("on your exclusion list")
+        reasons += exit_reasons(r, cfg, sym)
         gained = p.get("max_close", p["entry"]) >= 1.10 * p["entry"]
         if gained and r["w_close"] < r["ma10w"]:
             reasons.append("after a +10% move, weekly close below the 10-week MA")
@@ -377,7 +390,8 @@ def summarize(p: dict, cfg: dict) -> list[dict]:
     elif name == "green":
         rule = "Green needs the index above a rising 40-week average and more than 50% of stocks above their 200-day average; both hold"
     else:
-        rule = "Amber when only one of the two Green conditions holds (index above a rising 40-week average; more than 50% of stocks above their 200-day average)"
+        rule = ("Amber when the reading is neither Green (index above a rising 40-week average and more than 50% of "
+                "stocks above their 200-day average) nor Red")
     text = f"{trend}; {breadth}. Rule: {rule}. In plain terms, {REGIME_MEANING[name]}."
     if reg["raw"] != name:
         text += (f" This week's reading alone is {reg['raw'].capitalize()}, but the strategy only moves up one level "

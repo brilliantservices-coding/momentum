@@ -1,0 +1,16 @@
+{% extends "base.html" %}{% from "_macros.html" import inr, regime_pill %}{% block body %}
+<h1>Confirm override orders</h1>
+<p class="sub">These go to Zerodha as delivery (CNC) limit orders tagged "{{book_name}}". In market hours they are regular orders; outside them they are after-market orders for the next session.</p>
+{% if r.regime != 'green' %}<div class="banner bad">The regime is {{ regime_pill(r.regime) }}. {% if r.regime=='red' %}The strategy makes no new buys in Red, because momentum stocks fall hardest then.{% else %}The strategy normally buys only the top {{r.top_n}}, at half size, in Amber.{% endif %} Buys here override that rule.</div>{% endif %}
+{% if errors %}<div class="banner bad">Left out: {{ errors|join('; ') }}</div>{% endif %}
+<form method="post" action="/orders/place">
+<div class="tablewrap"><table><thead><tr><th>Side</th><th>Stock</th><th>Qty</th><th>Limit ₹</th><th>Value</th><th>Stop for the book</th></tr></thead><tbody>
+{% for o in picked %}<tr><td><strong class="{{ 'cross' if o.side=='SELL' else 'tick' }}">{{o.side}}</strong></td><td>{{o.symbol}}</td><td class="num">{{o.qty}}</td><td class="num">{{o.price}}</td><td class="num">{{ inr(o.value) }}</td><td class="num">{{o.stop or ('default' if o.side=='BUY' else '')}}
+<input type="hidden" name="sel_{{o.symbol}}" value="on"><input type="hidden" name="side_{{o.symbol}}" value="{{o.side}}"><input type="hidden" name="qty_{{o.symbol}}" value="{{o.qty}}"><input type="hidden" name="price_{{o.symbol}}" value="{{o.price}}"><input type="hidden" name="stop_{{o.symbol}}" value="{{o.stop or ''}}"></td></tr>{% endfor %}
+</tbody></table></div>
+<p>Buys {{ inr(buy_total) }} · Sells {{ inr(sell_total) }} · Cash available {{ inr(r.cash_available) }}</p>
+<div class="card"><label class="small"><input type="checkbox" name="to_book" checked> Record fills in the {{book_name}} book and trade journal (a buy gets the stop shown, or the max-stop % below the fill)</label><br>
+<label class="small"><input type="checkbox" name="confirm"> I understand these are real orders on my Zerodha account</label>
+<div style="margin-top:10px"><button class="danger">Send {{picked|length}} order(s) to Zerodha</button> <a href="/reconcile">Cancel</a></div></div>
+</form>
+{% endblock %}

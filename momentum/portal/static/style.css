@@ -64,3 +64,5 @@ select{font:inherit;font-size:13px;padding:6px 8px;border:1px solid var(--line);
 .summary .sitem{padding:6px 0;border-bottom:1px solid var(--line)}.summary .sitem:last-child{border-bottom:0}
 .summary h3{font-size:14px;margin:4px 0 2px}.summary p{margin:0 0 4px;font-size:14px}
 .pill.act-park,.pill.act-unpark{color:var(--accent)}
+.act-sell{background:#fde2e1;color:#9b1c1c}.act-trim{background:#fdecd2;color:#8a4b00}.act-add{background:#dcf5e3;color:#11633a}
+.act-hold{background:#e8eef7;color:#24476b}.act-review{background:#f1eefb;color:#4b3a8a}.nowrap{white-space:nowrap}
