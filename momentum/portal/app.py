@@ -15,7 +15,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from mom import control, kite
+from mom import control, kite, orders as morders, reconcile as mrecon
 from mom.book import get_book, get_cfg, sign_off
 from mom.config import BOOK, DEFAULTS, REGIME_EXPOSURE, settings
 from mom.store import get_store, now_iso
@@ -310,6 +310,87 @@ async def zerodha_test_order(request: Request):
                                                      "action": "kite_test_order", "order_id": res.get("order_id"),
                                                      "final_status": res.get("final_status")})
     return back("/zerodha", f"Test order {res.get('order_id')}: {res.get('final_status')}.")
+
+
+def _recon(store):
+    week = _latest_week(store)
+    screen = store.get("mom_screens", week["week"]) if week else None
+    last = store.get("mom_kite", "last") or {}
+    chk = last.get("check") or {}
+    _, _, totals = _book_view(store)
+    data = mrecon.build(chk.get("holdings") or [], week, screen, get_book(store), get_cfg(store),
+                        book_value=totals["total"], cash_available=chk.get("cash_available"))
+    return data, last
+
+
+@app.get("/reconcile", response_class=HTMLResponse)
+def reconcile_page(request: Request):
+    store = get_store()
+    data, last = _recon(store)
+    st = None
+    if kite.configured():
+        try:
+            st = kite.call("/status")
+        except kite.RelayError:
+            st = None
+    return render(request, "reconcile.html", r=data, checked_at=last.get("check_at"), status=st,
+                  configured=kite.configured(), cfg=get_cfg(store),
+                  orders=store.list("mom_orders", order_by="at", limit=30))
+
+
+@app.post("/reconcile/refresh")
+def reconcile_refresh(request: Request):
+    store = get_store()
+    try:
+        res = kite.call("/check")
+    except kite.RelayError as exc:
+        return back("/reconcile", f"Could not read Zerodha: {exc}")
+    store.set("mom_kite", "last", {**(store.get("mom_kite", "last") or {}), "check": res, "check_at": now_iso()})
+    try:
+        n = morders.refresh(store)
+    except kite.RelayError:
+        n = 0
+    return back("/reconcile", f"Read {res.get('holdings_count', 0)} holdings from Zerodha"
+                              + (f" and updated {n} open order(s)." if n else "."))
+
+
+@app.post("/orders/review", response_class=HTMLResponse)
+async def orders_review(request: Request):
+    store = get_store()
+    form = await request.form()
+    cfg = get_cfg(store)
+    picked, errors = morders.parse(form, float(cfg["max_order_inr"]))
+    if not picked:
+        return back("/reconcile", "; ".join(errors) or "Tick at least one stock to order.")
+    data, _ = _recon(store)
+    return render(request, "orders_review.html", picked=picked, errors=errors, r=data,
+                  buy_total=sum(o["value"] for o in picked if o["side"] == "BUY"),
+                  sell_total=sum(o["value"] for o in picked if o["side"] == "SELL"))
+
+
+@app.post("/orders/place")
+async def orders_place(request: Request):
+    store = get_store()
+    form = await request.form()
+    if form.get("confirm") != "on":
+        return back("/reconcile", "Not sent: tick the confirmation box on the review page.")
+    cfg = get_cfg(store)
+    picked, errors = morders.parse(form, float(cfg["max_order_inr"]))
+    if errors or not picked:
+        return back("/reconcile", "Not sent: " + ("; ".join(errors) or "no orders"))
+    week = _latest_week(store)
+    res = morders.place(picked, current_user(request), form.get("to_book") == "on", (week or {}).get("week"), store)
+    summary = ", ".join(f"{o['side'].lower()} {o['qty']} {o['symbol']}: {o['status']}" for o in res)
+    return back("/reconcile", f"Sent {len(res)} order(s) to Zerodha. {summary}.")
+
+
+@app.post("/orders/refresh")
+def orders_refresh(request: Request):
+    try:
+        n = morders.refresh(get_store())
+    except kite.RelayError as exc:
+        return back("/reconcile", f"Could not check orders: {exc}")
+    return back("/reconcile", f"Checked {n} open order(s).")
 
 
 @app.get("/api/weeks/{wid}")

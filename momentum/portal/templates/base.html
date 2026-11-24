@@ -1,7 +1,7 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{% block title %}Momentum{% endblock %}</title><link rel="stylesheet" href="/static/style.css"></head>
 <body><header><div class="wrap top"><div class="brand">Momentum<small>weekly · India</small></div>
-<nav>{% for href,label in [("/","This week"),("/weeks","History"),("/book","Book"),("/runs","Runs"),("/zerodha","Zerodha"),("/settings","Settings")] %}
+<nav>{% for href,label in [("/","This week"),("/weeks","History"),("/book","Book"),("/reconcile","Reconcile"),("/runs","Runs"),("/zerodha","Zerodha"),("/settings","Settings")] %}
 <a href="{{href}}" class="{{'on' if nav==href or (href!='/' and nav.startswith(href)) }}">{{label}}</a>{% endfor %}</nav>
 <div class="user">{{user}}</div></div></header>
 <main class="wrap">
