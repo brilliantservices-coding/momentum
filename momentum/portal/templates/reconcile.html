@@ -17,9 +17,9 @@ Reading places nothing.</span></div>
 
 <form method="post" action="/orders/review">
 <h2>Your holdings: suggested action</h2>
-{% if r.rows %}<div class="tablewrap"><table><thead><tr><th></th><th>Stock</th><th>Action</th><th>Zerodha / book qty</th><th>Avg → last</th><th>P&amp;L</th><th>Why</th><th>Order</th></tr></thead><tbody>
+{% if r.rows %}<div class="tablewrap"><table><thead><tr><th><input type="checkbox" class="pickall" data-group="h" title="Select or clear all holdings" aria-label="Select all holdings"></th><th>Stock</th><th>Action</th><th>Zerodha / book qty</th><th>Avg → last</th><th>P&amp;L</th><th>Why</th><th>Order</th></tr></thead><tbody>
 {% for x in r.rows %}<tr>
-<td>{% if x.kite_qty or x.action=='ADD' %}<input type="checkbox" name="sel_{{x.symbol}}" {{ 'checked' if x.action in ('SELL','TRIM') and x.in_book else '' }}>{% endif %}</td>
+<td>{% if x.kite_qty or x.action=='ADD' %}<input type="checkbox" class="pick" data-group="h" name="sel_{{x.symbol}}" {{ 'checked' if x.action in ('SELL','TRIM') and x.in_book else '' }}>{% endif %}</td>
 <td><strong>{{x.symbol}}</strong><div class="small">{{x.sector or ''}}{% if x.rank %} · rank {{x.rank}}{% endif %}</div></td>
 <td><span class="pill act-{{x.action|lower}}">{{x.action}}</span>{% if x.qty %}<div class="small">{{x.qty}} sh</div>{% endif %}</td>
 <td class="num">{{x.kite_qty}} / {{x.book_qty}}<div class="small">{{x.recon}}</div></td>
@@ -34,8 +34,8 @@ Reading places nothing.</span></div>
 
 <h2>Override buys: stocks that pass every filter</h2>
 <p class="sub">These passed all {{ 'filters' }} this week but are not held. The weekly proposal only buys the top {{r.top_n}} with a valid entry{% if r.regime!='green' %} and the {{r.regime|capitalize}} regime limits buying{% endif %}; tick any you want to buy anyway. Suggested quantity is {{ {"green":"full","amber":"half","red":"quarter"}[r.regime] }} size (1% risk to a {{cfg.max_stop_pct}}% stop); change it as you like.</p>
-{% if r.candidates %}<div class="tablewrap"><table><thead><tr><th></th><th>Rank</th><th>Stock</th><th>Close</th><th>RS rating · RS55</th><th>Entry this week</th><th>Order (BUY)</th></tr></thead><tbody>
-{% for c in r.candidates %}<tr><td><input type="checkbox" name="sel_{{c.symbol}}"></td><td class="num">{{c.rank}}</td>
+{% if r.candidates %}<div class="tablewrap"><table><thead><tr><th><input type="checkbox" class="pickall" data-group="c" title="Select or clear all candidates" aria-label="Select all candidates"></th><th>Rank</th><th>Stock</th><th>Close</th><th>RS rating · RS55</th><th>Entry this week</th><th>Order (BUY)</th></tr></thead><tbody>
+{% for c in r.candidates %}<tr><td><input type="checkbox" class="pick" data-group="c" name="sel_{{c.symbol}}"></td><td class="num">{{c.rank}}</td>
 <td><strong>{{c.symbol}}</strong><div class="small">{{c.sector}}</div></td><td class="num">{{c.close}}</td>
 <td class="num">{{c.rs_rating}} · {{c.rs55}}%</td><td class="small">{% if c.proposed %}<span class="tick">proposed this week</span> · {% endif %}{{c.setup}}</td>
 <td class="nowrap"><input type="hidden" name="side_{{c.symbol}}" value="BUY">
@@ -54,4 +54,15 @@ Reading places nothing.</span></div>
 <td class="num">{{o.filled_qty or 0}}{% if o.avg_price %} @ {{o.avg_price}}{% endif %}</td>
 <td class="small">{{ 'applied' if o.applied else ('on fill' if o.to_book else 'not tracked') }}</td><td class="small">{{o.by}}</td></tr>{% endfor %}
 </tbody></table></div>{% else %}<div class="card empty">No override orders yet.</div>{% endif %}
+<script>
+(function(){
+  function boxes(g){return [].slice.call(document.querySelectorAll('input.pick[data-group="'+g+'"]'));}
+  function sync(g){var all=document.querySelector('input.pickall[data-group="'+g+'"]');if(!all)return;
+    var b=boxes(g),n=b.filter(function(x){return x.checked;}).length;
+    all.checked=b.length>0&&n===b.length;all.indeterminate=n>0&&n<b.length;}
+  [].forEach.call(document.querySelectorAll('input.pickall'),function(all){var g=all.dataset.group;
+    all.addEventListener('change',function(){boxes(g).forEach(function(x){x.checked=all.checked;});sync(g);});
+    boxes(g).forEach(function(x){x.addEventListener('change',function(){sync(g);});});sync(g);});
+})();
+</script>
 {% endblock %}
