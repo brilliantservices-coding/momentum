@@ -626,14 +626,16 @@ def settings_save(request: Request, provider: str = Form(...), model: str = Form
                   analyst_per_run: int = Form(50), extraction_per_run: int = Form(50),
                   redteam_per_run: int = Form(50), min_rules_met: int = Form(5),
                   analyst_deep_count: int = Form(40), analyst_light_count: int = Form(80),
-                  analyst_redo_days: int = Form(14), triage_model: str = Form("claude-sonnet-5-5")):
+                  analyst_redo_days: int = Form(14), triage_model: str = Form("claude-sonnet-5-5"),
+                  extraction_model: str = Form("claude-sonnet-5-5")):
     if provider == "openai":
         model = (openai_model_custom or openai_model).strip()
     if provider not in llm.PROVIDERS or not llm.valid_model(provider, model) or effort not in llm.EFFORTS or \
             not 0 <= daily_cap_usd <= 50 or not (0 <= openai_price_in <= 500 and 0 <= openai_price_out <= 2000) or \
             not all(1 <= n <= 200 for n in (analyst_per_run, extraction_per_run, redteam_per_run)) or \
             not 1 <= min_rules_met <= 7 or not 0 <= analyst_deep_count <= 300 or \
-            not 0 <= analyst_light_count <= 500 or not 1 <= analyst_redo_days <= 90 or triage_model not in llm.MODELS:
+            not 0 <= analyst_light_count <= 500 or not 1 <= analyst_redo_days <= 90 or triage_model not in llm.MODELS or \
+            extraction_model not in llm.MODELS:
         raise HTTPException(400)
     user = current_user(request)
     get_store().set("control", "llm", {"provider": provider, "model": model, "effort": effort,
@@ -643,6 +645,7 @@ def settings_save(request: Request, provider: str = Form(...), model: str = Form
                                        "min_rules_met": min_rules_met, "analyst_deep_count": analyst_deep_count,
                                        "analyst_light_count": analyst_light_count,
                                        "analyst_redo_days": analyst_redo_days, "triage_model": triage_model,
+                                       "extraction_model": extraction_model,
                                        "updated": now_iso(), "by": user},
                     merge=True)
     get_store().set("audit", f"{now_iso()}-llm-settings", {"at": now_iso(), "user": user, "action": "llm settings",

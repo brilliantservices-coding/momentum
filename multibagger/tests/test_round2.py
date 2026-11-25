@@ -197,3 +197,31 @@ def test_fable_model_can_be_selected(env, cli):
     fake = cli([{"ok": 1}])
     llm.complete_json("s", "p", store=store)
     assert "claude-fable-5-2" in fake.calls[0][0]
+
+
+def test_extraction_skips_routine_old_and_duplicate(env, cli):
+    from mb.agents import extraction
+    store, blob = env
+    _seed_watchlist(store, blob)
+    store.set("filings", "r1", {"symbol": "ALPHA", "subject": "Copy of newspaper publication", "date": "20-Nov-2026"})
+    store.set("filings", "o1", {"symbol": "ALPHA", "subject": "Receipt of order worth Rs 50 cr", "date": "01-Jan-2020"})
+    blob.put("inbox/docs/ALPHA/concall-Q2FY27.txt", b"Guided 25% volume growth.")
+    fake = cli([{"facts": [{"type": "volume_growth", "statement": "25% volume growth"}]}, {"facts": []}])
+    out = extraction.run(store=store, log=LOG)
+    assert out["documents"] == 1 and out["skipped_routine_or_old"] == 2
+    assert store.get("filings", "r1")["skipped"] == "routine notice" and "older" in store.get("filings", "o1")["skipped"]
+    assert "claude-sonnet-5-5" in fake.calls[0][0]  # extraction model, not the main model
+    calls = len(fake.calls)
+    blob.put("inbox/docs/ALPHA/concall-Q2FY27-copy.txt", b"Guided 25% volume growth.")  # same file, new name
+    out = extraction.run(store=store, log=LOG)
+    assert out["duplicate_documents"] == 1 and out["documents"] == 0 and len(fake.calls) == calls
+    blob.put("inbox/docs/ALPHA/concall-Q2FY27.txt", b"Revised: guided 30% volume growth.")  # updated file
+    cli([{"facts": [{"type": "volume_growth", "statement": "30% volume growth"}]}])
+    assert extraction.run(store=store, log=LOG)["documents"] == 1
+    got = [x["statement"] for x in store.list("facts") if x.get("filing_id") == "doc-ALPHA-concall-Q2FY27"]
+    assert got == ["30% volume growth"]
+    assert any("concall-Q2FY27@" in p for p in blob.list("docs/ALPHA/"))  # the earlier version is kept
+    from mb.agents import screener
+    store.set("candidates", "ALPHA", {**(store.get("candidates", "ALPHA") or {}), "passed": True})
+    wanted = {r["symbol"]: r for r in screener.publish_docs_wanted(store)}
+    assert len(wanted["ALPHA"]["sha256"]["concall-Q2FY27.txt"]) == 64

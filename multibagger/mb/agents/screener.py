@@ -92,8 +92,13 @@ def publish_docs_wanted(store, n: int = DOCS_WANTED) -> list[dict]:
         parts = path.split("/")
         if len(parts) >= 3:
             have.setdefault(parts[-2], []).append(parts[-1])
+    sums = {}  # file -> sha256, so the desktop task can re-upload a file whose content changed
+    for d in store.list("documents"):
+        for f in [d.get("file", "").rsplit("/", 1)[-1]] + list(d.get("duplicates") or []):
+            if f and d.get("sha256"):
+                sums.setdefault(d.get("symbol"), {})[f] = d["sha256"]
     rows = [{"symbol": c["id"], "name": c.get("name"), "lane": c.get("lane"), "playbook": c.get("playbook"),
-             "have": sorted(have.get(c["id"], []))} for c in eligible(store)[:n]]
+             "have": sorted(have.get(c["id"], [])), "sha256": sums.get(c["id"], {})} for c in eligible(store)[:n]]
     get_blob().put("docs/wanted.json", json.dumps({"updated": now_iso(), "stocks": rows}, indent=1).encode(),
                    "application/json")
     store.set("control", "docs_wanted", {"updated": now_iso(), "symbols": [r["symbol"] for r in rows]})

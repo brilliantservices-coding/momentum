@@ -157,8 +157,21 @@ The screener writes `docs/wanted.json` to the bucket: the top 50 qualified stock
 on file. The desktop task downloads, for each, the latest annual report, investor presentation and concall
 transcript into `gs://mb-<project>-raw/inbox/docs/<SYMBOL>/` named `<type>-<period>.pdf`, where the type is one
 of `annual-report`, `presentation`, `concall`, `results`, `rating` (e.g. `concall-Q2FY27.pdf`). The extraction
-agent reads each once (up to 150 pages / 180k characters, one model call), saves the facts (annual reports and
+agent reads each once (up to 80 pages / 120k characters, one model call), saves the facts (annual reports and
 results P1, presentations and transcripts P2) and moves the file to `docs/<SYMBOL>/`.
+
+Each document's SHA-256 is stored. The same content uploaded again (even under another name) is filed with no
+model call. A file with the same name but new content is read again: its old facts are replaced and the earlier
+version is kept as `<name>@<date>`. `wanted.json` lists each stock's checksums under `sha256`, so the desktop
+task can re-upload a file whose content changed instead of skipping by name.
+
+### Fact extraction (filings)
+
+Filings are read once (marked `extracted`). To keep runs short, extraction works only on deep-band stocks
+(below), skips routine notices (newspaper ads, trading window, AGM/postal ballot, ESOP allotments...) and filings
+older than 90 days without a model call, reads at most 90 filings per run in batches of 15 with 12 attachment
+pages each, and stops reading PDFs after 5 download failures. The model is the Settings "extraction model"
+(default Sonnet). The run summary shows what is still to do; the next run continues.
 
 ### Company analyst bands (how much analysis each stock gets)
 
