@@ -97,3 +97,56 @@ def per_run(store, agent: str, default: int = 50) -> int:
     """Stocks an agent handles per run: the Settings page value; MB_<AGENT>_MAX on the job overrides it."""
     from .. import llm
     return int(os.getenv(f"MB_{agent.upper()}_MAX") or llm.get_settings(store).get(f"{agent}_per_run") or default)
+
+
+DEEP_TIERS = ("A", "B", "C")
+PROMOTE_AT = 62  # a triage score this high earns a full memo on the next run
+BAND_LABELS = {"deep": "Full analysis", "light": "Quick triage", "tail": "Not analysed (screen only)"}
+
+
+def analyst_bands(store, cands: list[dict] | None = None, scores: dict | None = None, asked=()) -> dict[str, dict]:
+    """Which health-qualified stocks get the company analyst's time, and how much:
+
+    deep  - the full memo: the top `analyst_deep_count` by research priority, plus current tier A/B/C names,
+            stocks with company documents read, stocks with a positive filing trigger, stocks whose quick
+            triage scored 62+ and stocks requested on their page;
+    light - a short triage on the numbers alone: the next `analyst_light_count`;
+    tail  - everything else: no LLM call, ranked by the screen only.
+    Returns {symbol: {"band", "why", "rank"}} for every qualified (or requested) stock."""
+    from .. import llm
+    cfg = llm.get_settings(store)
+    deep_n, light_n = int(cfg.get("analyst_deep_count") or 40), int(cfg.get("analyst_light_count") or 80)
+    cands = cands if cands is not None else eligible(store)
+    scores = scores if scores is not None else {s["id"]: s for s in store.list("scores")}
+    with_docs = {d.get("symbol") for d in store.list("documents")}
+    out: dict[str, dict] = {}
+    for sym in asked:
+        out[sym] = {"band": "deep", "why": "requested on its page"}
+    for rank, c in enumerate(cands, 1):
+        sym, s = c["id"], scores.get(c["id"]) or {}
+        if sym in out:
+            out[sym]["rank"] = rank
+            continue
+        why = None
+        if rank <= deep_n:
+            why = f"top {deep_n} by research priority"
+        elif s.get("depth") != "triage" and s.get("tier") in DEEP_TIERS:
+            why = f"tier {s.get('tier')} from a full analysis"
+        elif sym in with_docs:
+            why = "company documents on file"
+        elif "event" in (c.get("signal_groups") or []):
+            why = "positive filing trigger"
+        elif s.get("depth") == "triage" and (s.get("triage_score") or 0) >= PROMOTE_AT:
+            why = f"quick triage scored {s.get('triage_score')}"
+        if why:
+            out[sym] = {"band": "deep", "why": why, "rank": rank}
+    light_left = light_n
+    for rank, c in enumerate(cands, 1):
+        if c["id"] in out:
+            continue
+        if light_left > 0:
+            out[c["id"]] = {"band": "light", "why": f"next {light_n} by research priority", "rank": rank}
+            light_left -= 1
+        else:
+            out[c["id"]] = {"band": "tail", "why": "below the deep and triage counts", "rank": rank}
+    return out

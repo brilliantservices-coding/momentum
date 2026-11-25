@@ -9,7 +9,8 @@ from .. import inputs, llm, requests
 from ..scoring import score_memo
 from ..playbooks import VERSION as PLAYBOOK_VERSION
 from ..store import now_iso
-from ._context import ARCHETYPES, GROUND_RULES, company_record, compact, eligible, per_run, strength
+from ._context import (ARCHETYPES, GROUND_RULES, PROMOTE_AT, analyst_bands, company_record, compact, eligible,
+                       per_run, strength)
 
 
 
@@ -88,36 +89,125 @@ Return {{"archetype": "...", "theme_id": "... or null", "primary_playbook": "...
 "open_questions": ["what to read next"], "guidance_track_record": "met/missed summary or unknown"}}"""
 
 
-def run(store, log) -> dict:
-    """Analyses watchlist names whose inputs changed since their last memo, never-analysed first.
+TRIAGE_PROMPT = """Quick triage of {symbol} ({name}) for a multibagger research queue: numbers only, no filings.
+Sector playbook: {playbook}. Judge it against its industry (percentiles given), not fixed bars, and look for an
+early inflection (accelerating growth, rising margins and incremental returns, reinvestment runway) rather than
+static quality alone. Score each signal family from 0 to its weight {weights} on what these numbers suggest; with
+no evidence on management, ecosystem or governance, give about half the weight. Be brief.
 
-    Inputs are the company record (fundamentals, screen, red flags, filings, facts), the active themes
-    and this prompt. Unchanged names are skipped; a price move of 15%+ since the memo counts as a change.
+Screen and numbers:
+{record}
+
+Return {{"archetype": "...", "summary": "two lines at most", "families": {{"theme": n, "financial": n,
+"management": n, "visibility": n, "ecosystem": n, "valuation": n, "governance": n}},
+"worth_full_analysis": true|false, "why": "one line"}}"""
+TRIAGE_FIELDS = ("name", "sector", "industry", "mcap", "pe", "price", "sales_cagr_3y", "profit_cagr_3y", "qtr_sales_yoy",
+                 "roce", "roce_3y_avg", "debt_to_equity", "promoter", "pledge", "promoter_change", "debtor_days",
+                 "revenue_growth_1y", "revenue_acceleration", "qtr_acceleration", "revenue_growth_ttm",
+                 "relative_growth_gap", "ebitda_margin", "margin_delta", "qtr_margin_delta", "incremental_roce",
+                 "sales_to_capital_delta", "reinvestment_rate", "cwip_to_net_block", "reinvestment_growth")
+TRIAGE_REDO_DAYS = 30
+
+
+def _days_since(stamp: str | None) -> float:
+    from datetime import datetime, timezone
+    try:
+        return (datetime.now(timezone.utc) - datetime.fromisoformat(stamp)).total_seconds() / 86400
+    except (TypeError, ValueError):
+        return 1e9
+
+
+def _flags(rec: dict) -> str:
+    """Open red flags as evidence: a new or newly dismissed flag always earns a fresh memo."""
+    return ",".join(sorted(f"{a.get('rule')}:{a.get('severity')}" for a in rec.get("red_flags") or []
+                           if a.get("status") != "dismissed"))
+
+
+def _triage(store, c: dict, model: str) -> dict:
+    """One short call on the numbers alone. Stored as depth "triage" with tier "Triage": it never earns a
+    tier, a red-team review or a buy ticket; a score of 62+ moves the stock to the full analysis."""
+    from ..playbooks import brief, weights_for
+    from ..rules import conviction
+    sym = c["id"]
+    f = store.get("fundamentals", sym) or {}
+    pb = c.get("playbook") or "general"
+    w = weights_for(pb)
+    rec = {"numbers": {k: f.get(k) for k in TRIAGE_FIELDS if f.get(k) is not None},
+           "screen": {k: c.get(k) for k in ("rules", "lane", "trigger_events", "signal_groups", "peer_pct",
+                                             "quant_bis", "research_priority", "missing_sector_data")}}
+    out = llm.complete_json(GROUND_RULES, TRIAGE_PROMPT.format(
+        symbol=sym, name=c.get("name") or f.get("name") or sym, playbook=brief(pb)["name"], weights=w,
+        record=compact(rec, 8000)), agent="analyst-triage", store=store, model=model, effort="low")
+    fam = out.get("families") or {}
+    sc = conviction({k: (v.get("points") if isinstance(v, dict) else v) for k, v in fam.items()}, weights=w)
+    return {"symbol": sym, "name": c.get("name"), "depth": "triage", "tier": "Triage", "score": sc["score"],
+            "triage_score": sc["score"], "families": sc["families"], "weights": w, "playbook": pb,
+            "archetype": out.get("archetype"), "triage": {"summary": out.get("summary"), "why": out.get("why"),
+                                                         "worth_full_analysis": out.get("worth_full_analysis")},
+            "analysed": now_iso(), "redteam_needed": False, "model_version": model,
+            "notes": ["quick triage on the numbers only: no tier until a full analysis"]}
+
+
+def run(store, log) -> dict:
+    """Full memos for the deep band only, a quick triage for the light band, nothing for the tail
+    (see _context.analyst_bands). Deep stocks are redone when their inputs changed, but at most every
+    `analyst_redo_days` unless new evidence (facts, documents) arrived or the price moved 15%+.
     """
     only = inputs.only_symbols()
     asked = only or set(requests.queued(store, "analyst"))
+    cfg = llm.get_settings(store)
     cands = eligible(store)
     if asked:  # stocks requested on the stock page: first, even if unchanged or not health-qualified
         known = {c["id"]: c for c in store.list("candidates") if c["id"] in asked}
         cands = [known.get(s) or {"id": s} for s in sorted(asked)] + ([] if only else [c for c in cands if c["id"] not in asked])
     scores = {s["id"]: s for s in store.list("scores")}
+    bands = analyst_bands(store, [c for c in cands if c["id"] not in asked], scores, asked)
+    counts = {b: sum(1 for v in bands.values() if v["band"] == b) for b in ("deep", "light", "tail")}
+    store.set("control", "analyst_bands", {"updated": now_iso(), "counts": counts,
+                                           "bands": {k: v["band"] for k, v in bands.items()}})
     themes = [{"id": t["id"], "name": t.get("name"), "total": t.get("total")}
               for t in store.list("themes", where=[("active", "==", True)])]
-    todo, unchanged = [], 0
+    redo_days = float(cfg.get("analyst_redo_days") or 14)
+    facts_n: dict[str, int] = {}
+    for x in store.list("facts"):
+        facts_n[x.get("symbol")] = facts_n.get(x.get("symbol"), 0) + 1
+    docs_n: dict[str, int] = {}
+    for d in store.list("documents"):
+        docs_n[d.get("symbol")] = docs_n.get(d.get("symbol"), 0) + 1
+    todo, unchanged, recent = [], 0, 0
+    light = []
     for c in cands:
         sym, prev = c["id"], scores.get(c["id"]) or {}
+        band = (bands.get(sym) or {}).get("band", "tail")
+        if band == "light":
+            if sym not in asked and prev and (prev.get("depth") != "triage" or
+                                              _days_since(prev.get("analysed")) < TRIAGE_REDO_DAYS):
+                continue  # keeps its full memo, or a triage under 30 days old
+            light.append(c)
+            continue
+        if band != "deep":
+            continue
         rec = company_record(store, sym)
         key = inputs.digest(rec, themes, PROMPT)
         price = rec["fundamentals"].get("price")
-        if (sym not in asked and prev and not inputs.redo_due(prev.get("analysed")) and prev.get("inputs_hash") == key
-                and not inputs.price_moved(prev.get("price_at_analysis"), price)):
-            unchanged += 1
-            continue
-        todo.append((prev.get("analysed", ""), sym, c, rec, key, price))
-    # Never-analysed first, then oldest memo; within that, the strongest Pass 1 screens go first.
+        full = prev and prev.get("depth") != "triage"
+        if sym not in asked and full and not inputs.redo_due(prev.get("analysed")):
+            moved = inputs.price_moved(prev.get("price_at_analysis"), price)
+            if prev.get("inputs_hash") == key and not moved:
+                unchanged += 1
+                continue
+            new_evidence = (facts_n.get(sym, 0) > (prev.get("facts_count") or 0)
+                            or docs_n.get(sym, 0) > (prev.get("docs_count") or 0)
+                            or _flags(rec) != prev.get("flags_key"))
+            if not moved and not new_evidence and _days_since(prev.get("analysed")) < redo_days:
+                recent += 1  # inputs changed a little (a new filing headline), but the memo is recent
+                continue
+        todo.append((prev.get("analysed", "") if full else "", sym, c, rec, key, price))
+    # Requested first, then never fully analysed, then the oldest memo; ties by research priority.
     todo.sort(key=lambda t: (t[1] not in asked, t[0], strength(t[2])))
+    light.sort(key=lambda c: (c["id"] not in asked, strength(c)))
     picked = todo[:max(per_run(store, "analyst"), len(asked))]
-    results, errors = {}, {}
+    results, errors, triaged = {}, {}, {}
     stopped = None
     for _, sym, c, rec, key, price in picked:
         if inputs.out_of_time():
@@ -146,12 +236,14 @@ def run(store, log) -> dict:
         store.set("scores", sym, {"symbol": sym, "name": c.get("name"), **score, "archetype": out.get("archetype"),
                                   "theme_id": out.get("theme_id"), "previous_score": prev.get("score"),
                                   "analysed": stamp, "redteam_needed": score["tier"] in ("A", "B"),
-                                  "inputs_hash": key, "price_at_analysis": price,
+                                  "inputs_hash": key, "price_at_analysis": price, "depth": "deep",
+                                  "facts_count": facts_n.get(sym, 0), "docs_count": docs_n.get(sym, 0),
+                                  "flags_key": _flags(rec),
                                   "playbook": (rec.get("playbook") or {}).get("id"),
                                   "evidence_confidence": v2["evidence_confidence"], "bis": v2["bis"]["total"],
                                   "convergence_passed": v2["convergence"]["passed"], "gates": v2["gates"],
                                   "base_multiple": v2["base_multiple"], "rules_version": v2["rules_version"],
-                                  "model_version": llm.get_settings(store).get("model"),
+                                  "model_version": cfg.get("model"),
                                   "playbook_version": PLAYBOOK_VERSION})
         memo = {"symbol": sym, **out, "inflection_tracker": v2["inflection_tracker"], "score": score,
                 "bis_scored": v2["bis"], "convergence": v2["convergence"],
@@ -161,8 +253,33 @@ def run(store, log) -> dict:
         results[sym] = f"{score['score']} ({score['tier']})"
         requests.finish(store, "analyst", [sym], results[sym])
         log.info("%s: %s tier %s", sym, score["score"], score["tier"])
-    left = max(0, len(todo) - len(results) - len(errors))
-    return {"analysed": len(results), "scores": results, "errors": errors, "eligible": len(cands),
-            "unchanged_skipped": unchanged, "still_to_do": left, "stopped_by": stopped,
-            "more_to_do": bool(left and results and stopped != "daily cap" and not only),
-            "remaining_unanalysed": max(0, sum(1 for c in cands if c["id"] not in scores) - len(results))}
+    # Quick triage for the light band, in what is left of this run's per-run count.
+    room = max(0, per_run(store, "analyst") - len(results) - len(errors))
+    tmodel = cfg.get("triage_model") or cfg.get("model")
+    for c in light[:room] if not stopped else []:
+        if inputs.out_of_time():
+            stopped = "time"
+            break
+        try:
+            doc = _triage(store, c, tmodel)
+        except llm.BudgetExceeded as exc:
+            stopped = "daily cap"
+            log.warning("%s", exc)
+            break
+        except Exception as exc:
+            errors[c["id"]] = str(exc)[:300]
+            log.error("%s triage: %s", c["id"], exc)
+            continue
+        store.set("scores", c["id"], doc)
+        triaged[c["id"]] = doc["triage_score"]
+        log.info("%s: triage %s%s", c["id"], doc["triage_score"],
+                 " (moves to full analysis)" if doc["triage_score"] >= PROMOTE_AT else "")
+    light_ids = {c["id"] for c in light}
+    deep_err = sum(1 for e in errors if e not in light_ids)
+    left = max(0, len(todo) - len(results) - deep_err) + max(0, len(light) - len(triaged) - (len(errors) - deep_err))
+    log.info("bands: %d deep, %d triage, %d not analysed; this run %d full memos, %d triages", counts["deep"],
+             counts["light"], counts["tail"], len(results), len(triaged))
+    return {"analysed": len(results), "triaged": len(triaged), "scores": results, "triage_scores": triaged,
+            "errors": errors, "eligible": len(cands), "bands": counts, "tail_skipped": counts["tail"],
+            "unchanged_skipped": unchanged, "recent_skipped": recent, "still_to_do": left, "stopped_by": stopped,
+            "more_to_do": bool(left and (results or triaged) and stopped != "daily cap" and not only)}
