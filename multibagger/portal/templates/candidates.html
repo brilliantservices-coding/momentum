@@ -14,7 +14,7 @@
 <td class="small">{{r.lane or ''}}{% if r.passed and not r.qualified %}<br><span class="unk" title="Below the Settings minimum rules: AI agents skip it">not qualified</span>{% endif %}</td>
 <td class="num">{{r.research_priority if r.research_priority is not none else '–'}}{% if r.inflection_candidate %} <span class="pill on" title="{{(r.trigger_events or [])|join(', ')}}">inflection</span>{% endif %}</td>
 <td class="small">{{playbooks.get(r.playbook, {}).get('name', '') if r.playbook else ''}}</td>
-{% set p=progress.get(r.id, {}) %}<td class="small" title="Facts extracted · analysed · red team">{{p.facts or 0}} facts · {% if p.analysed %}<span class="tick">analysed</span> {{p.tier}}{% else %}<span class="unk">not analysed</span>{% endif %}{% if p.redteam %} · red team ✓{% endif %}</td>
+{% set p=progress.get(r.id, {}) %}<td class="small" title="Facts extracted · analysed · red team">{{p.facts or 0}} facts · {% if p.analysed %}<span class="tick">analysed</span> {{p.tier}}{% elif p.triage is not none %}triage {{p.triage}}{% else %}<span class="unk">not analysed</span>{% endif %}{% if p.band %}<br><span class="small">{{ {'deep':'deep band','light':'triage band','tail':'tail: screen only'}[p.band] }}</span>{% endif %}{% if p.redteam %} · red team ✓{% endif %}</td>
 <td>{% for a in alerts.get(r.id, []) %}<span class="pill {{a.severity}}">{{a.rule}}</span> {% endfor %}{% if r.blocked_by %}<span class="small">{{r.blocked_by}}</span>{% endif %}</td></tr>{% endfor %}
 </table></div>{% else %}<div class="card empty">Nothing here yet. Upload fundamentals on the <a href="/data">Data page</a>, then run the Screener agent.</div>{% endif %}
 {% endblock %}

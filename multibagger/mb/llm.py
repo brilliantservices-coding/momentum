@@ -26,7 +26,9 @@ from .store import get_store, now_iso
 DEFAULTS = {"provider": "subscription", "model": "claude-opus-5-5", "effort": "medium",
             "daily_cap_usd": settings.daily_llm_cap_usd, "vertex_region": "global",
             "openai_price_in": 2.5, "openai_price_out": 15.0, "analyst_per_run": 50,
-            "extraction_per_run": 50, "redteam_per_run": 50, "min_rules_met": 5}
+            "extraction_per_run": 50, "redteam_per_run": 50, "min_rules_met": 5,
+            "analyst_deep_count": 40, "analyst_light_count": 80, "analyst_redo_days": 14,
+            "triage_model": "claude-sonnet-5-5"}
 MODELS = ["claude-fable-5-2", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]
 # USD per million tokens (input, output), first-party list prices used as an estimate.
 # Fable 5.2 uses the Fable 5.1 list price as its estimate (same tier); the subscription reports its own cost.
@@ -183,10 +185,16 @@ def month_usage(store=None) -> dict:
     return out
 
 
-def complete_json(system: str, prompt: str, agent: str | None = None, store=None, timeout: int = 900):
-    """One call, JSON reply. Raises BudgetExceeded before calling if today's cap is used up."""
+def complete_json(system: str, prompt: str, agent: str | None = None, store=None, timeout: int = 900,
+                  model: str | None = None, effort: str | None = None):
+    """One call, JSON reply. Raises BudgetExceeded before calling if today's cap is used up.
+    model/effort override the Settings for this call (Claude providers only; e.g. the analyst's triage)."""
     store = store or get_store()
-    cfg = get_settings(store)
+    cfg = dict(get_settings(store))
+    if model and cfg["provider"] != "openai" and model in MODELS:
+        cfg["model"] = model
+    if effort in EFFORTS:
+        cfg["effort"] = effort
     spent = spend_today(store).get("usd", 0.0)
     if spent >= float(cfg["daily_cap_usd"]):
         raise BudgetExceeded(f"daily LLM cap reached: ${spent:.2f} of ${float(cfg['daily_cap_usd']):.2f}")

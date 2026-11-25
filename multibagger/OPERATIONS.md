@@ -160,6 +160,19 @@ of `annual-report`, `presentation`, `concall`, `results`, `rating` (e.g. `concal
 agent reads each once (up to 150 pages / 180k characters, one model call), saves the facts (annual reports and
 results P1, presentations and transcripts P2) and moves the file to `docs/<SYMBOL>/`.
 
+### Company analyst bands (how much analysis each stock gets)
+
+The analyst no longer writes a full memo for every qualified stock (`_context.analyst_bands`, Settings):
+- **Deep** (full memo): the top `analyst_deep_count` (default 40) by research priority, plus tier A/B/C names
+  from a full analysis, stocks with company documents read, stocks with a positive filing trigger, stocks
+  whose quick triage scored 62+, and stocks run from their page.
+- **Light** (quick triage): the next `analyst_light_count` (default 80). One short call on the numbers alone
+  with the triage model (default Sonnet, low effort), redone at most every 30 days. Stored as depth "triage",
+  tier "Triage": no tier, red team or buy ticket. A stock that already has a full memo keeps it.
+- **Tail**: no LLM call.
+A full memo is redone when its evidence changes (new facts, documents or red flags, a 15%+ price move);
+other input changes (a new filing headline) wait until the memo is `analyst_redo_days` (default 14) old.
+
 ### Per-stock stages
 
 Every stock has a page at `/stock/<SYMBOL>` (click a symbol on the Watchlist or Funnel): each stage, what is

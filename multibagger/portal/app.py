@@ -126,8 +126,10 @@ def _funnel():
         if p.get("action") == "buy starter":
             proposals.setdefault(p.get("symbol"), p)
     held = {h["id"] for h in store.list("holdings")}
+    from mb.agents._context import analyst_bands
+    bands = analyst_bands(store, scores=scores)
     stage_names = ["Screened (fundamentals loaded)", "Market cap and liquidity gates", "Enough data (4+ rules known, or an inflection)",
-                   "Pass 1: Compounder or Inflection lane", "No open hard red flag: watchlist", "Analysed by the AI analyst",
+                   "Pass 1: Compounder or Inflection lane", "No open hard red flag: watchlist", "Full analysis by the AI analyst",
                    "Conviction 52+ (tier A, B or C after the v2 gates)", "Cleared the red team", "Proposed for purchase",
                    "Approved by you / held"]
     rows = []
@@ -140,7 +142,8 @@ def _funnel():
         checks = [True, all(v is not False for v in gates.values()), known >= 4 or inflection,
                   bool(p1), c.get("passed") and not c.get("blocked_by")]
         s = scores.get(sym)
-        checks += [bool(s), bool(s) and s.get("tier") in ("A", "B", "C"),
+        full = bool(s) and s.get("depth") != "triage"
+        checks += [full, full and s.get("tier") in ("A", "B", "C"),
                    bool(s) and s.get("tier") in ("A", "B", "C") and not s.get("redteam_needed"),
                    sym in proposals or sym in held, sym in held]
         reached = 0
@@ -153,10 +156,16 @@ def _funnel():
         elif reached < 5:
             why = "; ".join(pass1_reasons(c)) or "did not pass"
         else:
-            why = ["not analysed yet (the analyst takes the strongest screens first, a set number per run)", f"score {s and s.get('score')} below 52",
+            band = (bands.get(sym) or {}).get("band")
+            not_yet = ("quick triage only" + (f" (scored {s.get('triage_score')})" if s else " (not yet)") if band == "light"
+                       else "not analysed: below the analyst's deep and triage counts" if band == "tail"
+                       else "not health-qualified for the analyst" if band is None
+                       else "in the analyst's deep band, not analysed yet")
+            why = [not_yet, f"score {s and s.get('score')} below 52",
                    "waiting for the red team", "no ticket yet (portfolio agent)", "ticket awaiting your decision"][reached - 5]
         rows.append({**c, "reached": reached, "stage": stage_names[reached - 1], "why": why,
-                     "score": s and s.get("score"), "tier": s and s.get("tier")})
+                     "score": s and s.get("score"), "tier": s and s.get("tier"),
+                     "band": (bands.get(sym) or {}).get("band")})
     counts = [sum(1 for r in rows if r["reached"] > i) for i in range(len(stage_names))]
     stages = [{"name": "NSE universe", "n": universe}] + [{"name": n, "n": counts[i], "idx": i + 1}
                                                           for i, n in enumerate(stage_names)]
@@ -500,8 +509,16 @@ def _stock_stages(store, sym: str) -> dict:
                          f"score {score.get('score')} · tier {score.get('tier')} · evidence "
                          f"{score.get('evidence_confidence') or '?'}" + (" · memo predates strategy v2" if stale else ""),
                          memo.get("written"), llm_stage=True))
+    elif score.get("depth") == "triage":
+        stages.append(st("analyst", "Company analyst", "partial",
+                         f"quick triage only: {score.get('triage_score')} on the numbers · "
+                         f"{(score.get('triage') or {}).get('summary') or ''}", score.get("analysed"), llm_stage=True))
     else:
         stages.append(st("analyst", "Company analyst", "todo", "not analysed yet", llm_stage=True))
+    from mb.agents._context import BAND_LABELS, analyst_bands
+    band = analyst_bands(store).get(sym)
+    stages[-1]["detail"] += (f" · analyst band: {BAND_LABELS[band['band']]} ({band['why']})" if band
+                             else " · not health-qualified: scheduled runs skip it")
     if rt:
         stages.append(st("redteam", "Red team", "done", f"{rt.get('verdict')} · {rt.get('score_before')} → "
                          f"{rt.get('score_after')}", rt.get("written"), llm_stage=True, can_run=bool(memo)))
@@ -530,8 +547,12 @@ def _progress(store) -> dict:
     out = {}
     for sym in set(facts) | set(scores):
         sc = scores.get(sym) or {}
-        out[sym] = {"facts": facts.get(sym, 0), "analysed": bool(sc),
+        out[sym] = {"facts": facts.get(sym, 0), "analysed": bool(sc) and sc.get("depth") != "triage",
+                    "triage": sc.get("triage_score") if sc.get("depth") == "triage" else None,
                     "tier": sc.get("tier"), "redteam": sym in rts}
+    from mb.agents._context import analyst_bands
+    for sym, b in analyst_bands(store, scores=scores).items():
+        out.setdefault(sym, {"facts": 0})["band"] = b["band"]
     return out
 
 
@@ -589,7 +610,13 @@ def settings_page(request: Request, msg: str = ""):
     return render(request, "settings.html", llm=cfg, providers=llm.PROVIDERS, models=llm.MODELS, prices=llm.PRICES,
                   openai_models=llm.openai_models(), efforts=llm.EFFORTS, spend=spend, cap=cap,
                   left=max(0.0, cap - float(spend.get("usd") or 0)), month=llm.month_usage(store),
-                  limits=llm.limits(store), calls=calls, ready=ready, msg=msg)
+                  limits=llm.limits(store), calls=calls, ready=ready, msg=msg, band_counts=_band_counts(store))
+
+
+def _band_counts(store) -> dict:
+    from mb.agents._context import analyst_bands
+    bands = analyst_bands(store)
+    return {b: sum(1 for v in bands.values() if v["band"] == b) for b in ("deep", "light", "tail")}
 
 
 @app.post("/settings")
@@ -597,20 +624,25 @@ def settings_save(request: Request, provider: str = Form(...), model: str = Form
                   openai_model_custom: str = Form(""), effort: str = Form(...), daily_cap_usd: float = Form(...),
                   openai_price_in: float = Form(2.5), openai_price_out: float = Form(15.0),
                   analyst_per_run: int = Form(50), extraction_per_run: int = Form(50),
-                  redteam_per_run: int = Form(50), min_rules_met: int = Form(5)):
+                  redteam_per_run: int = Form(50), min_rules_met: int = Form(5),
+                  analyst_deep_count: int = Form(40), analyst_light_count: int = Form(80),
+                  analyst_redo_days: int = Form(14), triage_model: str = Form("claude-sonnet-5-5")):
     if provider == "openai":
         model = (openai_model_custom or openai_model).strip()
     if provider not in llm.PROVIDERS or not llm.valid_model(provider, model) or effort not in llm.EFFORTS or \
             not 0 <= daily_cap_usd <= 50 or not (0 <= openai_price_in <= 500 and 0 <= openai_price_out <= 2000) or \
             not all(1 <= n <= 200 for n in (analyst_per_run, extraction_per_run, redteam_per_run)) or \
-            not 1 <= min_rules_met <= 7:
+            not 1 <= min_rules_met <= 7 or not 0 <= analyst_deep_count <= 300 or \
+            not 0 <= analyst_light_count <= 500 or not 1 <= analyst_redo_days <= 90 or triage_model not in llm.MODELS:
         raise HTTPException(400)
     user = current_user(request)
     get_store().set("control", "llm", {"provider": provider, "model": model, "effort": effort,
                                        "daily_cap_usd": daily_cap_usd, "openai_price_in": openai_price_in,
                                        "openai_price_out": openai_price_out, "analyst_per_run": analyst_per_run,
                                        "extraction_per_run": extraction_per_run, "redteam_per_run": redteam_per_run,
-                                       "min_rules_met": min_rules_met,
+                                       "min_rules_met": min_rules_met, "analyst_deep_count": analyst_deep_count,
+                                       "analyst_light_count": analyst_light_count,
+                                       "analyst_redo_days": analyst_redo_days, "triage_model": triage_model,
                                        "updated": now_iso(), "by": user},
                     merge=True)
     get_store().set("audit", f"{now_iso()}-llm-settings", {"at": now_iso(), "user": user, "action": "llm settings",
