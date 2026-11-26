@@ -102,7 +102,7 @@ def test_overview_pipeline_runs_in_place(env, monkeypatch):
     blob.put("inbox/nse/announcements/a.csv", b"x")
     c = TestClient(app)
     page = c.get("/").text
-    assert 'id="pipeline"' in page and "Run pipeline" in page and "Ready to run: 1" in page
+    assert 'id="pipeline"' in page and "Run pipeline" in page and "Ready: 1 · 1 announcement file" in page
     assert page.index("Universe builder") < page.index("Screener agent") < page.index("Portfolio agent")
     r = c.post("/agents/screener/run", headers={"X-Requested-With": "fetch"})
     assert r.json() == {"ok": True, "msg": "Run started"} and started[-1][0] == "screener"
