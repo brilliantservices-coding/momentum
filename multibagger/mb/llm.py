@@ -28,7 +28,8 @@ DEFAULTS = {"provider": "subscription", "model": "claude-opus-5-5", "effort": "m
             "openai_price_in": 2.5, "openai_price_out": 15.0, "analyst_per_run": 50,
             "extraction_per_run": 50, "redteam_per_run": 50, "min_rules_met": 5,
             "analyst_deep_count": 40, "analyst_light_count": 80, "analyst_redo_days": 14,
-            "triage_model": "claude-sonnet-5-5", "extraction_model": "claude-sonnet-5-5"}
+            "triage_model": "claude-sonnet-5-5", "extraction_model": "claude-sonnet-5-5",
+            "pipeline_auto": False}
 MODELS = ["claude-fable-5-2", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]
 # USD per million tokens (input, output), first-party list prices used as an estimate.
 # Fable 5.2 uses the Fable 5.1 list price as its estimate (same tier); the subscription reports its own cost.

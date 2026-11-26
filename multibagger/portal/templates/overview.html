@@ -15,17 +15,48 @@
 <h2>Funnel</h2>
 <div class="card"><div class="meta" style="flex-wrap:wrap">{% for st in stages %}<span><strong style="color:var(--ink)">{{ '{:,}'.format(st.n) }}</strong> {{st.name}}</span>{{ '<span>→</span>'|safe if not loop.last }}{% endfor %}</div>
 <p class="small" style="margin:6px 0 0"><a href="/funnel">See every company, the factors for and against it, and where it stopped →</a></p></div>
-<h2>Agents</h2>
-<div class="agents">{% for a in agents %}<div class="card agent">
-<h3><a href="/agents/{{a.id}}" style="color:inherit">{{a.name}}</a></h3><p>{{a.description}}</p>
-<div class="meta"><span class="pill {{'on' if a.enabled else 'off'}}">{{'scheduled' if a.enabled else 'paused'}}</span>
-<span>{{a.cadence}} · <code>{{a.schedule}}</code></span>
-{% if a.last_status %}<span class="pill {{a.last_status}}">{{a.last_status}}</span><span>{{(a.last_finished or a.last_started)|ist}}</span>{% else %}<span>never run</span>{% endif %}</div>
-<div class="row">
-<form method="post" action="/agents/{{a.id}}/run"><button class="primary">Run now</button></form>
-<form method="post" action="/agents/{{a.id}}/stop"><button>Stop</button></form>
-<form method="post" action="/agents/{{a.id}}/{{'pause' if a.enabled else 'resume'}}"><button>{{'Pause schedule' if a.enabled else 'Resume schedule'}}</button></form>
-</div></div>{% endfor %}</div>
+<h2>Pipeline</h2>
+<div id="pipeflash" class="flash" hidden></div>
+<div id="pipeline">{% include "_pipeline.html" %}</div>
+<script>
+(() => {
+  const box = document.getElementById('pipeline'), flash = document.getElementById('pipeflash');
+  let last = null, timer = null;
+  const say = t => { flash.textContent = t; flash.hidden = !t; };
+  async function refresh() {
+    const r = await fetch('/pipeline/view', {headers: {'X-Requested-With': 'fetch'}});
+    if (r.ok) box.innerHTML = await r.text();
+  }
+  async function poll() {
+    clearTimeout(timer);
+    let active = false;
+    try {
+      const s = await (await fetch('/pipeline/status')).json();
+      active = s.pipeline.status === 'running' ||
+        Object.values(s.agents).some(a => a.status === 'running' || a.status === 'starting');
+      const sig = JSON.stringify(s);
+      if (last !== null && sig !== last) await refresh();  // a stage started or ended: fresh counts too
+      last = sig;
+    } catch (e) { /* keep the page as it is; try again later */ }
+    timer = setTimeout(poll, active ? 8000 : 60000);
+  }
+  box.addEventListener('submit', async e => {
+    const f = e.target;
+    if (!f.dataset.inplace) return;
+    e.preventDefault();
+    f.querySelectorAll('button').forEach(b => { b.disabled = true; b.textContent += '…'; });
+    try {
+      const r = await fetch(f.action, {method: 'POST', body: new FormData(f), headers: {'X-Requested-With': 'fetch'}});
+      const j = await r.json();
+      say(j.msg || '');
+    } catch (err) { say('Could not reach the portal: ' + err); }
+    await refresh();
+    last = null;
+    poll();
+  });
+  poll();
+})();
+</script>
 <h2>Emergency stop</h2>
 <div class="card"><p class="small" style="margin-top:0">Pauses every schedule and cancels running jobs. It also trips automatically when the month's GCP spend reaches the budget.</p>
 <form method="post" action="/kill">{% if kill.killed %}<input type="hidden" name="action" value="release"><button class="primary">Release kill switch</button>
