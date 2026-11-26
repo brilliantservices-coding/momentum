@@ -56,6 +56,56 @@ def current_user(request: Request) -> str:
     return raw.split(":", 1)[-1].lower() if raw else ("local" if settings.backend != "gcp" else "")
 
 
+NOT_ALLOWED = "Sorry, you are not authorized to run the stage."
+NOT_ALLOWED_CHANGE = "Sorry, you are not authorized to make changes in this portal."
+
+
+def role_of(user: str) -> str | None:
+    """'admin' (can run and change things), 'viewer' (read-only) or None (not let in)."""
+    s = settings
+    if not (s.allowed_users or s.admin_users or s.viewer_users):
+        return "admin"  # no lists configured (local use)
+    admins = s.admin_users or s.allowed_users
+    if user in admins:
+        return "admin"
+    if user and ("*" in s.viewer_users or user in s.viewer_users or user in s.allowed_users):
+        return "viewer"
+    return None
+
+
+VIEWER_CAP_DEFAULT = int(os.getenv("MB_VIEWER_CAP", "40"))
+
+
+def _viewer_cap(store) -> int:
+    return int((store.get("control", "viewers") or {}).get("cap") or VIEWER_CAP_DEFAULT)
+
+
+def admit_viewer(user: str) -> str | None:
+    """Open sign-up ("*" in the viewer list): records each viewer in viewers/. Returns None when the viewer may
+    come in, otherwise the reason they are refused (blocked by an admin, or the sign-up cap is reached).
+    Viewers named in the lists are not counted against the cap but can still be blocked."""
+    store = get_store()
+    rec = store.get("viewers", user)
+    now = now_iso()
+    if rec and rec.get("status") == "blocked":
+        return "Your access to this portal has been removed by its owner."
+    named = user in settings.viewer_users or user in settings.allowed_users
+    if not rec:
+        if not named:
+            active = [v for v in store.list("viewers") if v.get("status") != "blocked" and not v.get("named")]
+            if len(active) >= _viewer_cap(store):
+                return "Sorry, this portal has reached its limit of viewers. Ask its owner for access."
+        store.set("viewers", user, {"email": user, "status": "active", "first_seen": now, "last_seen": now,
+                                    "visits": 1, "named": named})
+    elif (age_days(rec.get("last_seen")) or 0) * 24 * 60 >= 10 or not rec.get("last_seen"):  # at most every 10 min
+        store.set("viewers", user, {"last_seen": now, "visits": int(rec.get("visits") or 0) + 1}, merge=True)
+    return None
+
+
+def can_act(request: Request) -> bool:
+    return getattr(request.state, "role", None) == "admin"
+
+
 @app.middleware("http")
 async def guard(request: Request, call_next):
     path = request.url.path
@@ -63,8 +113,20 @@ async def guard(request: Request, call_next):
         return JSONResponse({"error": "not found"}, status_code=404)
     if path not in OPEN_PATHS and not path.startswith("/static"):
         user = current_user(request)
-        if settings.allowed_users and user not in settings.allowed_users:
+        role = role_of(user)
+        if role is None:
             return HTMLResponse("Not authorised for this portal.", status_code=403)
+        if role == "viewer":
+            refused = admit_viewer(user)
+            if refused:
+                return HTMLResponse(refused, status_code=403)
+        request.state.role = role
+        if role != "admin" and request.method not in ("GET", "HEAD", "OPTIONS"):
+            # read-only viewers: every action is refused here, whatever page or script sent it
+            text = NOT_ALLOWED if path.startswith(("/agents/", "/pipeline/", "/stock/")) else NOT_ALLOWED_CHANGE
+            if request.headers.get("x-requested-with") == "fetch" or "json" in request.headers.get("accept", ""):
+                return JSONResponse({"ok": False, "msg": text}, status_code=403)
+            return HTMLResponse(text, status_code=403)
         if request.method == "POST":  # same-origin check against cross-site form posts
             origin = request.headers.get("origin") or request.headers.get("referer") or ""
             if origin and urlparse(origin).netloc != request.url.netloc:
@@ -76,8 +138,10 @@ def render(request: Request, name: str, **ctx):
     store = get_store()
     from mb.playbooks import PLAYBOOKS
     from mb.scoring import BIS_WEIGHTS
+    ctx.setdefault("nav", request.url.path)
     ctx.update(request=request, user=current_user(request), kill=store.get("control", "global") or {},
-               nav=request.url.path, settings=settings, playbooks=PLAYBOOKS, bis_weights=BIS_WEIGHTS)
+               settings=settings, playbooks=PLAYBOOKS, bis_weights=BIS_WEIGHTS,
+               can_act=can_act(request), not_allowed=NOT_ALLOWED, not_allowed_change=NOT_ALLOWED_CHANGE)
     return templates.TemplateResponse(request, name, ctx)
 
 
@@ -196,6 +260,14 @@ def healthz():
 
 
 @app.get("/", response_class=HTMLResponse)
+def home(request: Request, msg: str = ""):
+    """Admins land on the overview; read-only viewers on the funnel."""
+    if not can_act(request):
+        return funnel(request)
+    return overview(request, msg)
+
+
+@app.get("/overview", response_class=HTMLResponse)
 def overview(request: Request, msg: str = ""):
     store = get_store()
     week_ago = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat(timespec="seconds")
@@ -208,7 +280,8 @@ def overview(request: Request, msg: str = ""):
     }
     stages, _, _ = _funnel()
     return render(request, "overview.html", stats=stats, cost=_month_cost(),
-                  fresh=_freshness(), stages=stages, msg=msg, **_pipeline_ctx())
+                  fresh=_freshness(), stages=stages, msg=msg, nav="/overview" if not can_act(request) else "/",
+                  **_pipeline_ctx())
 
 
 def _pipeline_ctx(with_ready: bool = True) -> dict:
@@ -728,6 +801,44 @@ def settings_save(request: Request, provider: str = Form(...), model: str = Form
     get_store().set("audit", f"{now_iso()}-llm-settings", {"at": now_iso(), "user": user, "action": "llm settings",
                                                           "provider": provider, "model": model})
     return back("/settings", "Saved. Agents use the new settings from their next run.")
+
+
+@app.get("/viewers", response_class=HTMLResponse)
+def viewers_page(request: Request, msg: str = ""):
+    """Who has signed in read-only, when, and the controls to block or let them back in (admins only)."""
+    if not can_act(request):
+        raise HTTPException(403, NOT_ALLOWED_CHANGE)
+    store = get_store()
+    rows = sorted(store.list("viewers"), key=lambda v: v.get("last_seen") or "", reverse=True)
+    active = sum(1 for v in rows if v.get("status") != "blocked" and not v.get("named"))
+    return render(request, "viewers.html", rows=rows, cap=_viewer_cap(store), active=active, msg=msg,
+                  open_signup="*" in settings.viewer_users)
+
+
+@app.post("/viewers/cap")
+def viewers_cap(request: Request, cap: int = Form(...)):
+    if not 0 <= cap <= 1000:
+        raise HTTPException(400)
+    get_store().set("control", "viewers", {"cap": cap, "updated": now_iso(), "by": current_user(request)}, merge=True)
+    return back("/viewers", f"Viewer limit set to {cap}")
+
+
+@app.post("/viewers/{email}/{action}")
+def viewers_action(request: Request, email: str, action: str):
+    store = get_store()
+    email = email.lower()
+    if action not in ("block", "unblock", "remove") or not store.get("viewers", email):
+        raise HTTPException(400)
+    if action == "remove":  # frees the slot; they can sign up again while there is room
+        store.delete("viewers", email)
+        msg = f"Removed {email}: they can sign up again while there is room (block them to stop that)"
+    else:
+        store.set("viewers", email, {"status": "blocked" if action == "block" else "active",
+                                     "changed": now_iso(), "by": current_user(request)}, merge=True)
+        msg = f"Blocked {email}: they can no longer open the portal" if action == "block" else f"{email} can view again"
+    store.set("audit", f"{now_iso()}-viewer-{action}", {"at": now_iso(), "user": current_user(request),
+                                                       "action": f"viewer {action}", "viewer": email})
+    return back("/viewers", msg)
 
 
 @app.get("/costs", response_class=HTMLResponse)

@@ -1,5 +1,5 @@
 {% extends "base.html" %}{% block body %}
-<p class="small"><a href="/">← Overview</a></p>
+<p class="small"><a href="/overview">← Overview</a></p>
 <h1>{{agent.name}}</h1><p class="sub">{{agent.description}}</p>
 <div class="card"><div class="meta"><span class="pill {{'on' if agent.enabled else 'off'}}">{{'scheduled' if agent.enabled else 'paused'}}</span>
 <span>{{agent.cadence}} · <code>{{agent.schedule}}</code> (IST)</span><span>Cloud Run Job <code>{{settings.job_prefix}}{{agent.id}}</code></span></div>

@@ -25,7 +25,7 @@
   const say = t => { flash.textContent = t; flash.hidden = !t; };
   async function refresh() {
     const r = await fetch('/pipeline/view', {headers: {'X-Requested-With': 'fetch'}});
-    if (r.ok) box.innerHTML = await r.text();
+    if (r.ok) { box.innerHTML = await r.text(); if (window.mbLock) window.mbLock(box); }
   }
   async function poll() {
     clearTimeout(timer);

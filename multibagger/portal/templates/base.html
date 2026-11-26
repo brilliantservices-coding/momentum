@@ -1,12 +1,30 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{% block title %}Multibagger control{% endblock %}</title><link rel="stylesheet" href="/static/style.css"></head>
 <body><header><div class="wrap top"><div class="brand">Multibagger<small>agents · India</small></div>
-<nav>{% for href,label in [("/","Overview"),("/funnel","Funnel"),("/candidates","Watchlist"),("/alerts","Red flags"),("/filings","Filings"),("/research","Research"),("/approvals","Approvals"),("/data","Data"),("/costs","Costs"),("/settings","Settings")] %}
-<a href="{{href}}" class="{{'on' if nav==href or (href!='/' and nav.startswith(href)) }}">{{label}}</a>{% endfor %}</nav>
-<div class="user">{{user}}</div></div></header>
+<nav>{% set first = [("/","Overview"),("/funnel","Funnel")] if can_act else [("/","Funnel"),("/overview","Overview")] %}{% for href,label in first + [("/candidates","Watchlist"),("/alerts","Red flags"),("/filings","Filings"),("/research","Research"),("/approvals","Approvals"),("/data","Data"),("/costs","Costs"),("/settings","Settings")] + ([("/viewers","Viewers")] if can_act else []) %}
+<a href="{{href}}" class="{{'on' if nav==href or (href!='/' and nav.startswith(href)) or (not can_act and href=='/' and nav.startswith('/funnel')) }}">{{label}}</a>{% endfor %}</nav>
+<div class="user">{% if not can_act %}<span class="pill" title="You can see everything; running stages and changing settings is limited to the portal's owners">view only</span> {% endif %}{{user}}</div></div></header>
 <main class="wrap">
 {% if kill.killed %}<div class="banner bad"><strong>Kill switch is on.</strong> {{kill.reason}} ({{kill.at|ist}}). Scheduled runs are paused.</div>{% endif %}
 {% if msg %}<div class="flash">{{msg}}</div>{% endif %}
 {% block body %}{% endblock %}
 <p class="small" style="margin-top:40px">Educational research tool, not financial advice. Agents propose; you decide and place every order yourself.</p>
-</main></body></html>
+</main>
+{% if not can_act %}<script>
+// Read-only viewer: every action control is greyed out (the server refuses the actions too).
+window.mbLock = function (root) {
+  root.querySelectorAll('form[method="post"], form[method="POST"]').forEach(f => {
+    const stage = /\/(agents|pipeline|stock)\//.test(f.getAttribute('action') || '');
+    f.querySelectorAll('button, input[type="submit"]').forEach(b => {
+      b.classList.add('locked'); b.setAttribute('aria-disabled', 'true'); b.disabled = false;
+      b.title = stage ? {{ not_allowed|tojson }} : {{ not_allowed_change|tojson }};
+    });
+    f.querySelectorAll('input:not([type="hidden"]):not([type="submit"]), select, textarea').forEach(i => { i.disabled = true; });
+  });
+};
+document.addEventListener('submit', e => {
+  if ((e.target.method || '').toLowerCase() === 'post') { e.preventDefault(); e.stopImmediatePropagation(); }
+}, true);
+mbLock(document);
+</script>{% endif %}
+</body></html>

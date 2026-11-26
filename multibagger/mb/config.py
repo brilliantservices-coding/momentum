@@ -26,6 +26,15 @@ class Settings:
     allowed_users: tuple[str, ...] = tuple(
         u.strip().lower() for u in re.split(r"[,;]", os.getenv("MB_ALLOWED_USERS", "")) if u.strip()
     )
+    # Of those, who may run agents and change things. Everyone else who gets in sees a read-only portal.
+    # Empty: every allowed user can act (the behaviour before read-only viewers existed).
+    admin_users: tuple[str, ...] = tuple(
+        u.strip().lower() for u in re.split(r"[,;]", os.getenv("MB_ADMIN_USERS", "")) if u.strip()
+    )
+    # Read-only viewers on top of allowed_users; "*" lets in any account IAP lets through.
+    viewer_users: tuple[str, ...] = tuple(
+        u.strip().lower() for u in re.split(r"[,;]", os.getenv("MB_VIEWER_USERS", "")) if u.strip()
+    )
     monthly_budget_inr: float = float(os.getenv("MB_MONTHLY_BUDGET_INR", "2500"))
     daily_llm_cap_usd: float = float(os.getenv("MB_DAILY_LLM_CAP_USD", "1.0"))
     job_prefix: str = os.getenv("MB_JOB_PREFIX", "mb-")
