@@ -126,13 +126,21 @@ class FirestoreStore:
 
         q = self.db.collection(coll)
         where = list(where)
+        # Firestore needs a composite index for an equality filter combined with a range/!= filter on another
+        # field. In that case only the equality filters go to Firestore; the rest are applied here.
+        local = []
+        if len({f for f, _, _ in where}) > 1 and any(op != "==" for _, op, _ in where):
+            local = [w for w in where if w[1] != "=="]
         for field, op, value in where:
-            q = q.where(filter=FieldFilter(field, op, value))
+            if (field, op, value) not in local:
+                q = q.where(filter=FieldFilter(field, op, value))
         if order_by and not where:
             q = q.order_by(order_by, direction=self._fs.Query.DESCENDING if desc else self._fs.Query.ASCENDING)
             if limit:
                 q = q.limit(limit)
         items = [{"id": s.id, **s.to_dict()} for s in q.stream()]
+        if local:
+            items = [i for i in items if all(_match(i.get(f), op, v) for f, op, v in local)]
         if order_by and where:
             present = sorted((i for i in items if i.get(order_by) is not None), key=lambda i: i[order_by], reverse=desc)
             items = present + [i for i in items if i.get(order_by) is None]

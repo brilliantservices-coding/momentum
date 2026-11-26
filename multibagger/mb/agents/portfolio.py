@@ -15,7 +15,9 @@ MAX_NAMES = 25
 def run(store, log) -> dict:
     held = {h["id"]: h for h in store.list("holdings")}
     pending = {p.get("symbol"): p for p in store.list("proposals", where=[("status", "==", "pending")])}
-    hard = {a.get("symbol") for a in store.list("alerts", where=[("severity", "==", "hard"), ("status", "!=", "dismissed")])}
+    # one equality filter only: severity + status!= would need a composite Firestore index
+    hard = {a.get("symbol") for a in store.list("alerts", where=[("severity", "==", "hard")])
+            if a.get("status") != "dismissed"}
     stamp, new = now_iso(), {}
     for s in sorted(store.list("scores"), key=lambda s: -(s.get("score") or 0)):
         sym, tier, score = s["id"], s.get("tier"), s.get("score") or 0
