@@ -151,15 +151,20 @@ done
 say "Portal (Cloud Run, scales to zero, Google sign-in via IAP)"
 PORTAL_FLAGS=(--region="$REGION" --image="$IMAGE" --service-account="$SA_PORTAL" --no-allow-unauthenticated
   --min-instances=0 --max-instances=2 --cpu=1 --memory=512Mi --concurrency=40 --labels="$LABELS" "${PORTAL_SECRET_FLAGS[@]}")
-IAP_ENV="$COMMON_ENV,MB_ROLE=portal,MB_ALLOWED_USERS=${OWNER_EMAILS//,/;}"
+ADMIN_EMAILS="${ADMIN_EMAILS:-$OWNER_EMAILS}"
+VIEWER_EMAILS="${VIEWER_EMAILS:-}"
+IAP_ENV="$COMMON_ENV,MB_ROLE=portal,MB_ALLOWED_USERS=${OWNER_EMAILS//,/;},MB_ADMIN_USERS=${ADMIN_EMAILS//,/;},MB_VIEWER_USERS=${VIEWER_EMAILS//,/;}"
 if $G run deploy mb-portal "${PORTAL_FLAGS[@]}" --iap --set-env-vars="$IAP_ENV" || \
    $G beta run deploy mb-portal "${PORTAL_FLAGS[@]}" --iap --set-env-vars="$IAP_ENV"; then
   $G beta services identity create --service=iap.googleapis.com >/dev/null 2>&1 || true
   $G run services add-iam-policy-binding mb-portal --region="$REGION" \
     --member="serviceAccount:service-$PROJECT_NUMBER@gcp-sa-iap.iam.gserviceaccount.com" --role=roles/run.invoker >/dev/null
   IFS=',' read -ra OWNERS <<< "$OWNER_EMAILS"
-  for u in "${OWNERS[@]}"; do
-    $G iap web add-iam-policy-binding --member="user:$u" --role=roles/iap.httpsResourceAccessor \
+  IFS=',' read -ra VIEWERS <<< "$VIEWER_EMAILS"
+  for u in "${OWNERS[@]}" "${VIEWERS[@]}"; do
+    [ -z "$u" ] && continue
+    member="user:$u"; [ "$u" = "*" ] && member="allAuthenticatedUsers"
+    $G iap web add-iam-policy-binding --member="$member" --role=roles/iap.httpsResourceAccessor \
       --region="$REGION" --resource-type=cloud-run --service=mb-portal >/dev/null
   done
   PORTAL_MODE=iap

@@ -165,6 +165,16 @@ model call. A file with the same name but new content is read again: its old fac
 version is kept as `<name>@<date>`. `wanted.json` lists each stock's checksums under `sha256`, so the desktop
 task can re-upload a file whose content changed instead of skipping by name.
 
+### Read-only viewers
+
+`ADMIN_EMAILS` in infra/config.env (default: all of `OWNER_EMAILS`) may run agents and change settings.
+Everyone else who gets in (the rest of `OWNER_EMAILS`, plus `VIEWER_EMAILS`) sees a read-only portal:
+the funnel is their landing page, every page and run state is visible, and buttons are greyed out with
+"Sorry, you are not authorized to run the stage." The server refuses every non-GET request from a viewer
+(403), so the API cannot be used to get round the page. `VIEWER_EMAILS=*` lets in any Google account that
+passes sign-in (deploy.sh then grants IAP access to allAuthenticatedUsers; the OAuth consent screen must be
+published, or each viewer added as a test user).
+
 ### Stage pipeline (overview page)
 
 The overview lists the agents as a pipeline in run order: universe → fundamentals → ingestion → forensic →

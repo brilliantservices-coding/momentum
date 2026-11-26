@@ -56,6 +56,27 @@ def current_user(request: Request) -> str:
     return raw.split(":", 1)[-1].lower() if raw else ("local" if settings.backend != "gcp" else "")
 
 
+NOT_ALLOWED = "Sorry, you are not authorized to run the stage."
+NOT_ALLOWED_CHANGE = "Sorry, you are not authorized to make changes in this portal."
+
+
+def role_of(user: str) -> str | None:
+    """'admin' (can run and change things), 'viewer' (read-only) or None (not let in)."""
+    s = settings
+    if not (s.allowed_users or s.admin_users or s.viewer_users):
+        return "admin"  # no lists configured (local use)
+    admins = s.admin_users or s.allowed_users
+    if user in admins:
+        return "admin"
+    if user and ("*" in s.viewer_users or user in s.viewer_users or user in s.allowed_users):
+        return "viewer"
+    return None
+
+
+def can_act(request: Request) -> bool:
+    return getattr(request.state, "role", None) == "admin"
+
+
 @app.middleware("http")
 async def guard(request: Request, call_next):
     path = request.url.path
@@ -63,8 +84,16 @@ async def guard(request: Request, call_next):
         return JSONResponse({"error": "not found"}, status_code=404)
     if path not in OPEN_PATHS and not path.startswith("/static"):
         user = current_user(request)
-        if settings.allowed_users and user not in settings.allowed_users:
+        role = role_of(user)
+        if role is None:
             return HTMLResponse("Not authorised for this portal.", status_code=403)
+        request.state.role = role
+        if role != "admin" and request.method not in ("GET", "HEAD", "OPTIONS"):
+            # read-only viewers: every action is refused here, whatever page or script sent it
+            text = NOT_ALLOWED if path.startswith(("/agents/", "/pipeline/", "/stock/")) else NOT_ALLOWED_CHANGE
+            if request.headers.get("x-requested-with") == "fetch" or "json" in request.headers.get("accept", ""):
+                return JSONResponse({"ok": False, "msg": text}, status_code=403)
+            return HTMLResponse(text, status_code=403)
         if request.method == "POST":  # same-origin check against cross-site form posts
             origin = request.headers.get("origin") or request.headers.get("referer") or ""
             if origin and urlparse(origin).netloc != request.url.netloc:
@@ -76,8 +105,10 @@ def render(request: Request, name: str, **ctx):
     store = get_store()
     from mb.playbooks import PLAYBOOKS
     from mb.scoring import BIS_WEIGHTS
+    ctx.setdefault("nav", request.url.path)
     ctx.update(request=request, user=current_user(request), kill=store.get("control", "global") or {},
-               nav=request.url.path, settings=settings, playbooks=PLAYBOOKS, bis_weights=BIS_WEIGHTS)
+               settings=settings, playbooks=PLAYBOOKS, bis_weights=BIS_WEIGHTS,
+               can_act=can_act(request), not_allowed=NOT_ALLOWED, not_allowed_change=NOT_ALLOWED_CHANGE)
     return templates.TemplateResponse(request, name, ctx)
 
 
@@ -196,6 +227,14 @@ def healthz():
 
 
 @app.get("/", response_class=HTMLResponse)
+def home(request: Request, msg: str = ""):
+    """Admins land on the overview; read-only viewers on the funnel."""
+    if not can_act(request):
+        return funnel(request)
+    return overview(request, msg)
+
+
+@app.get("/overview", response_class=HTMLResponse)
 def overview(request: Request, msg: str = ""):
     store = get_store()
     week_ago = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat(timespec="seconds")
@@ -208,7 +247,8 @@ def overview(request: Request, msg: str = ""):
     }
     stages, _, _ = _funnel()
     return render(request, "overview.html", stats=stats, cost=_month_cost(),
-                  fresh=_freshness(), stages=stages, msg=msg, **_pipeline_ctx())
+                  fresh=_freshness(), stages=stages, msg=msg, nav="/overview" if not can_act(request) else "/",
+                  **_pipeline_ctx())
 
 
 def _pipeline_ctx(with_ready: bool = True) -> dict:

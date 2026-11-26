@@ -11,7 +11,7 @@
 <td class="small">{% if s.playbook %}{{playbooks.get(s.playbook, {}).get('name', s.playbook)}}<br>{% endif %}{{s.archetype or ''}}</td>
 <td class="small">{% if s.redteam_needed %}waiting{% elif s.redteamed %}<a href="/research/{{s.id}}#redteam">{{ '%+.1f'|format(s.redteam_adjustment or 0) }}</a>{% else %}–{% endif %}</td>
 <td class="small">{{s.analysed|ist('%d %b %Y')}}</td></tr>{% endfor %}</table></div>
-{% else %}<div class="card empty">No scores yet. Run the Company analyst from the <a href="/">Overview</a> once the watchlist has survivors.</div>{% endif %}
+{% else %}<div class="card empty">No scores yet. Run the Company analyst from the <a href="/overview">Overview</a> once the watchlist has survivors.</div>{% endif %}
 <h2>Themes</h2>
 {% if themes %}<div class="tablewrap"><table><tr><th>Theme</th><th>Total /30</th><th>Runway</th><th>Policy</th><th>Capital cycle</th><th>Breadth</th><th>Narrative</th><th>Valuation</th><th>Bottleneck</th></tr>
 {% for t in themes %}<tr><td><strong>{{t.name}}</strong>{% if t.active %} <span class="pill on">active</span>{% endif %}</td><td class="num">{{t.total}}</td>

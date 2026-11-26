@@ -69,3 +69,4 @@ h3.side{font-size:14px;margin:18px 0 8px;color:var(--muted)}
 @media (max-width:760px){.pipetable tr:first-child{display:none}.pipetable,.pipetable tbody,.pipetable tr,.pipetable td{display:block;width:100%}
 .pipetable tr{border-bottom:1px solid var(--line);padding:8px 0}.pipetable td{border:0;padding:2px 12px}.pipetable td.num{display:none}
 .pipetable .row.nowrap{flex-wrap:wrap}}
+button.locked,button.locked:hover{opacity:.45;cursor:not-allowed;filter:none}
