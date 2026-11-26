@@ -1,0 +1,42 @@
+{# The stage pipeline on the overview. Re-rendered in place by /pipeline/view; forms with data-inplace post by fetch. #}
+<div class="card pipehead">
+{% if pipe_run.status == 'running' %}
+<div><span class="pill running">pipeline running</span> <span class="small">started {{pipe_run.started|ist}} by {{pipe_run.by}}{% if pipe_run.current %} · now at <strong>{{pipe_run.current}}</strong>{% endif %}</span></div>
+<form method="post" action="/pipeline/stop" data-inplace="1"><button>Stop pipeline</button></form>
+{% else %}
+<div><strong>Run every stage in order</strong>
+<div class="small">Each stage starts when the one before it ends; stages with nothing new are skipped.{% if pipe_run.status %} Last pipeline run: {{pipe_run.status}} {{(pipe_run.finished or pipe_run.started)|ist}}{% if pipe_run.note %} ({{pipe_run.note}}){% endif %}.{% endif %}</div></div>
+<form method="post" action="/pipeline/run" data-inplace="1"><button class="primary">Run pipeline</button></form>
+{% endif %}
+</div>
+<ol class="pipe">
+{% for a in pipe %}
+{% set st = a.last_status %}
+<li class="card stage{{' ready' if a.ready.due}}{{' now' if a.current}}">
+<div class="stagehead"><span class="num">{{a.n_order}}</span><h3><a href="/agents/{{a.id}}" style="color:inherit">{{a.name}}</a></h3>
+{% if st %}<span class="pill {{st|replace(' ', '-')}}">{{st}}</span>{% endif %}</div>
+<p>{{a.description}}</p>
+<div class="readyline {{'due' if a.ready.due else 'idle'}}">{% if a.ready.due %}<strong>Ready to run{% if a.ready.n %}: {{ '{:,}'.format(a.ready.n) }}{% endif %}</strong> · {% else %}Up to date · {% endif %}{{a.ready.why or ''}}</div>
+<div class="meta"><span class="pill {{'on' if a.enabled else 'off'}}">{{'scheduled' if a.enabled else 'paused'}}</span>
+<span>{{a.cadence}} · <code>{{a.schedule}}</code></span>
+{% if st %}<span>{{'started' if st in ('running', 'starting') else 'last run'}} {{(a.last_started if st in ('running', 'starting') else (a.last_finished or a.last_started))|ist}}</span>{% else %}<span>never run</span>{% endif %}
+{% if a.step %}<span class="pill {{a.step.status}}">this pipeline: {{a.step.status}}</span>{% elif a.current %}<span class="pill running">this pipeline: now</span>{% endif %}</div>
+<div class="row">
+<form method="post" action="/agents/{{a.id}}/run" data-inplace="1"><button class="primary" {{'disabled' if st in ('running', 'starting')}}>Run now</button></form>
+<form method="post" action="/pipeline/run" data-inplace="1"><input type="hidden" name="start" value="{{a.id}}"><button title="Run this stage, then the later stages that have work ready" {{'disabled' if pipe_run.status == 'running'}}>Run from here ↓</button></form>
+<form method="post" action="/agents/{{a.id}}/stop" data-inplace="1"><button {{'disabled' if st not in ('running', 'starting')}}>Stop</button></form>
+<form method="post" action="/agents/{{a.id}}/{{'pause' if a.enabled else 'resume'}}" data-inplace="1"><button>{{'Pause schedule' if a.enabled else 'Resume schedule'}}</button></form>
+</div></li>
+{% endfor %}
+</ol>
+{% if pipe_side %}<h3 class="side">Outside the chain</h3>
+<div class="agents">{% for a in pipe_side %}{% set st = a.last_status %}<div class="card agent stage{{' ready' if a.ready.due}}">
+<div class="stagehead"><h3><a href="/agents/{{a.id}}" style="color:inherit">{{a.name}}</a></h3>{% if st %}<span class="pill {{st|replace(' ', '-')}}">{{st}}</span>{% endif %}</div>
+<p>{{a.description}}</p>
+<div class="readyline {{'due' if a.ready.due else 'idle'}}">{% if a.ready.due %}<strong>Ready to run</strong> · {% else %}Up to date · {% endif %}{{a.ready.why or ''}}</div>
+<div class="meta"><span class="pill {{'on' if a.enabled else 'off'}}">{{'scheduled' if a.enabled else 'paused'}}</span><span>{{a.cadence}} · <code>{{a.schedule}}</code></span>
+{% if st %}<span>{{(a.last_finished or a.last_started)|ist}}</span>{% else %}<span>never run</span>{% endif %}</div>
+<div class="row"><form method="post" action="/agents/{{a.id}}/run" data-inplace="1"><button class="primary" {{'disabled' if st in ('running', 'starting')}}>Run now</button></form>
+<form method="post" action="/agents/{{a.id}}/stop" data-inplace="1"><button {{'disabled' if st not in ('running', 'starting')}}>Stop</button></form>
+<form method="post" action="/agents/{{a.id}}/{{'pause' if a.enabled else 'resume'}}" data-inplace="1"><button>{{'Pause schedule' if a.enabled else 'Resume schedule'}}</button></form></div>
+</div>{% endfor %}</div>{% endif %}

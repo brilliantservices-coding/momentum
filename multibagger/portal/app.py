@@ -96,6 +96,8 @@ def _agents_with_state():
         row = {**a, **st, "enabled": st.get("enabled", a.get("default_enabled", True))}
         if row.get("last_status") == "running" and _stale(row.get("last_started"), a.get("timeout")):
             row["last_status"] = "stopped"
+        elif row.get("last_status") == "starting" and _stale(row.get("last_started"), 0):
+            row["last_status"] = "failed to start"  # the job never reached the runner (10+ minutes)
         out.append(row)
     return out
 
@@ -205,8 +207,76 @@ def overview(request: Request, msg: str = ""):
         "pending": len(store.list("proposals", where=[("status", "==", "pending")])),
     }
     stages, _, _ = _funnel()
-    return render(request, "overview.html", agents=_agents_with_state(), stats=stats, cost=_month_cost(),
-                  fresh=_freshness(), stages=stages, msg=msg)
+    return render(request, "overview.html", stats=stats, cost=_month_cost(),
+                  fresh=_freshness(), stages=stages, msg=msg, **_pipeline_ctx())
+
+
+def _pipeline_ctx(with_ready: bool = True) -> dict:
+    """The stages in pipeline order with their state and (with_ready) what each has waiting."""
+    from mb import pipeline
+    store = get_store()
+    agents = {a["id"]: a for a in _agents_with_state()}
+    try:
+        info = pipeline.ready(store) if with_ready else {}
+    except Exception as exc:  # the view still works without the counts
+        info = {a: {"due": False, "why": f"could not check: {type(exc).__name__}"} for a in agents}
+    run = pipeline.state(store)
+    done = {s["agent"]: s for s in run.get("steps") or []} if run.get("status") == "running" else {}
+    order = [a for a in pipeline.ORDER if a in agents]
+    stages = [{**agents[a], "ready": info.get(a) or {}, "step": done.get(a), "n_order": i + 1,
+               "current": run.get("status") == "running" and run.get("current") == a} for i, a in enumerate(order)]
+    side = [{**agents[a], "ready": info.get(a) or {}} for a in pipeline.SIDE if a in agents]
+    return {"pipe": stages, "pipe_side": side, "pipe_run": run}
+
+
+def _wants_json(request: Request) -> bool:
+    return request.headers.get("x-requested-with") == "fetch"
+
+
+@app.get("/pipeline/view", response_class=HTMLResponse)
+def pipeline_view(request: Request):
+    """The pipeline block alone, re-rendered in place by the overview page."""
+    return render(request, "_pipeline.html", **_pipeline_ctx())
+
+
+@app.get("/pipeline/status")
+def pipeline_status():
+    """Cheap poll for the overview: each stage's run state and the pipeline run (no readiness counts)."""
+    from mb import pipeline
+    agents = {a["id"]: {"status": a.get("last_status"), "started": a.get("last_started"),
+                        "finished": a.get("last_finished")} for a in _agents_with_state()}
+    run = pipeline.state(get_store())
+    return {"agents": agents, "pipeline": {k: run.get(k) for k in ("id", "status", "current", "note")}}
+
+
+@app.post("/pipeline/run")
+def pipeline_run(request: Request, start: str = Form("")):
+    from mb import pipeline
+    store = get_store()
+    user = current_user(request)
+    if (store.get("control", "global") or {}).get("killed"):
+        msg, ok = "Kill switch is on: release it first", False
+    elif pipeline.state(store).get("status") == "running":
+        msg, ok = "A pipeline run is already going: stop it first", False
+    else:
+        doc = pipeline.start(store, first=start or None, by=user)
+        ok = bool(doc.get("current"))
+        msg = (f"Pipeline started at {doc['current']}" if ok else "Nothing to run: no stage has work ready")
+        if ok:
+            store.set("agents", doc["current"], {"last_status": "starting", "last_started": now_iso()}, merge=True)
+        store.set("audit", f"{now_iso()}-pipeline-run", {"at": now_iso(), "user": user, "action": "pipeline run",
+                                                         "from": start or "first ready"})
+    return JSONResponse({"ok": ok, "msg": msg}) if _wants_json(request) else back("/", msg)
+
+
+@app.post("/pipeline/stop")
+def pipeline_stop(request: Request):
+    """Ends the pipeline run after the current stage (that stage's run keeps going unless stopped on its card)."""
+    from mb import pipeline
+    user = current_user(request)
+    pipeline.cancel(get_store(), by=user)
+    msg = "Pipeline stopped: the stage that is running finishes, nothing after it starts"
+    return JSONResponse({"ok": True, "msg": msg}) if _wants_json(request) else back("/", msg)
 
 
 @app.get("/agents/{agent_id}", response_class=HTMLResponse)
@@ -228,13 +298,20 @@ def agent_action(request: Request, agent_id: str, action: str):
     if agent_id not in {a["id"] for a in load_agents()}:
         raise HTTPException(404)
     user = current_user(request)
+    as_json = _wants_json(request)
+
+    def fail(text):
+        return JSONResponse({"ok": False, "msg": text}) if as_json else back(f"/agents/{agent_id}", text)
+
     if action in ("run", "redo"):
         if (get_store().get("control", "global") or {}).get("killed"):
-            return back(f"/agents/{agent_id}", "Kill switch is on: release it on the overview first")
+            return fail("Kill switch is on: release it on the overview first")
         try:
             control.run_now(agent_id, redo=action == "redo")
         except control.AlreadyRunning:
-            return back(f"/agents/{agent_id}", "Already running: wait for that run to finish, or stop it first")
+            return fail("Already running: wait for that run to finish, or stop it first")
+        # shown as "starting" until the job's container is up and the runner marks it running
+        get_store().set("agents", agent_id, {"last_status": "starting", "last_started": now_iso()}, merge=True)
         msg = "Run started (redoing every stock, ignoring saved results)" if action == "redo" else "Run started"
     elif action == "stop":
         msg = f"Stopped {control.stop(agent_id)} running execution(s)"
@@ -245,7 +322,7 @@ def agent_action(request: Request, agent_id: str, action: str):
         raise HTTPException(400)
     get_store().set("audit", f"{now_iso()}-{agent_id}-{action}",
                     {"at": now_iso(), "user": user, "agent": agent_id, "action": action})
-    return back(f"/agents/{agent_id}", msg)
+    return JSONResponse({"ok": True, "msg": msg}) if as_json else back(f"/agents/{agent_id}", msg)
 
 
 @app.post("/kill")
@@ -627,7 +704,7 @@ def settings_save(request: Request, provider: str = Form(...), model: str = Form
                   redteam_per_run: int = Form(50), min_rules_met: int = Form(5),
                   analyst_deep_count: int = Form(40), analyst_light_count: int = Form(80),
                   analyst_redo_days: int = Form(14), triage_model: str = Form("claude-sonnet-5-5"),
-                  extraction_model: str = Form("claude-sonnet-5-5")):
+                  extraction_model: str = Form("claude-sonnet-5-5"), pipeline_auto: str = Form("")):
     if provider == "openai":
         model = (openai_model_custom or openai_model).strip()
     if provider not in llm.PROVIDERS or not llm.valid_model(provider, model) or effort not in llm.EFFORTS or \
@@ -645,7 +722,7 @@ def settings_save(request: Request, provider: str = Form(...), model: str = Form
                                        "min_rules_met": min_rules_met, "analyst_deep_count": analyst_deep_count,
                                        "analyst_light_count": analyst_light_count,
                                        "analyst_redo_days": analyst_redo_days, "triage_model": triage_model,
-                                       "extraction_model": extraction_model,
+                                       "extraction_model": extraction_model, "pipeline_auto": bool(pipeline_auto),
                                        "updated": now_iso(), "by": user},
                     merge=True)
     get_store().set("audit", f"{now_iso()}-llm-settings", {"at": now_iso(), "user": user, "action": "llm settings",

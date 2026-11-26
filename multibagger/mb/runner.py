@@ -87,13 +87,34 @@ def run(agent_id: str, force: bool = False) -> dict:
     duration = round(time.monotonic() - t0, 1)
     store.set("runs", run_id, {"agent": agent_id, "status": status, "started": started, "finished": finished,
                                 "duration_s": duration, "summary": summary, "log": handler.lines[-200:]})
-    store.set("agents", agent_id, {"last_status": status, "last_finished": finished, "last_summary": summary}, merge=True)
+    store.set("agents", agent_id, {"last_status": status, "last_finished": finished, "last_summary": summary,
+                                   **({"last_ok_started": started} if status == "succeeded" else {})}, merge=True)
+    if not str(summary.get("next_run") or "").startswith("started") and not only:
+        summary["pipeline"] = _pipeline_next(store, agent_id, status, summary, force)
+        if summary["pipeline"] != "pipeline not active":
+            log.info("%s", summary["pipeline"])
+            store.set("runs", run_id, {"summary": summary}, merge=True)
     if status == "failed":
         raise SystemExit(1)
     return {"status": status, "run_id": run_id, "summary": summary}
 
 
 CHAIN_MAX = int(os.getenv("MB_CHAIN_MAX", "30"))
+
+
+def _pipeline_next(store, agent_id: str, status: str, summary: dict, force: bool) -> str:
+    """This stage is done (no follow-up run of its own): start the next pipeline stage with work ready.
+    A scheduled run starts the later stages too when Settings has "run the later stages" switched on."""
+    from . import pipeline
+    try:
+        out = pipeline.advance(store, agent_id, status, summary)
+        if out == "pipeline not active" and not force and status == "succeeded" and agent_id in pipeline.ORDER \
+                and pipeline.auto_after_schedule(store):
+            doc = pipeline.start(store, after=agent_id, by=f"after scheduled {agent_id} run")
+            out = f"pipeline: started {doc.get('current')}" if doc.get("current") else "pipeline: no later stage had work ready"
+        return out
+    except Exception as exc:  # the stage's own result stands; the pipeline just doesn't continue
+        return f"pipeline error: {type(exc).__name__}: {str(exc)[:200]}"
 
 
 def _continue(store, agent_id: str, run_id: str, symbols=None) -> str:
@@ -112,6 +133,8 @@ def _continue(store, agent_id: str, run_id: str, symbols=None) -> str:
         env["MB_SYMBOLS"] = ",".join(symbols)
     if os.getenv("MB_REDO_SINCE"):
         env["MB_REDO_SINCE"] = os.environ["MB_REDO_SINCE"]
+    if os.getenv("MB_PIPELINE"):
+        env["MB_PIPELINE"] = os.environ["MB_PIPELINE"]
     try:
         control.run_now(agent_id, exclude=run_id, env=env)
     except Exception as exc:

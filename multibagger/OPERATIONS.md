@@ -165,6 +165,26 @@ model call. A file with the same name but new content is read again: its old fac
 version is kept as `<name>@<date>`. `wanted.json` lists each stock's checksums under `sha256`, so the desktop
 task can re-upload a file whose content changed instead of skipping by name.
 
+### Stage pipeline (overview page)
+
+The overview lists the agents as a pipeline in run order: universe → fundamentals → ingestion → forensic →
+screener → extraction → analyst → red team → portfolio (`mb/pipeline.py`). The theme analyst is quarterly and
+sits outside the chain. Each card keeps its schedule, last run and buttons, plus a "Ready to run" line saying
+what is waiting (announcement files in the inbox, filings since the last forensic run, new fundamentals for
+the screener, company documents and deep-band filings for extraction, stocks without a memo or with new facts
+for the analyst, names waiting for the red team, possible tickets). These are cheap reads, refreshed when the
+page loads and whenever a stage starts or ends.
+
+Buttons act in place: the page posts by fetch and polls `/pipeline/status` (every 8 s while something runs,
+every minute otherwise), re-rendering the block when a stage changes state. A run shows "starting" until its
+container is up ("failed to start" after 10 minutes).
+
+"Run pipeline" starts the first stage with work ready; "Run from here" runs that stage and then the later ones.
+Each stage's job carries `MB_PIPELINE`; when its run (and its own follow-up runs) end, the runner starts the
+next stage with work ready and records skipped ones in `control/pipeline`. A failure, the daily LLM cap, the
+kill switch or "Stop pipeline" ends it. Settings → Pipeline: "after a scheduled stage run, run the later stages
+that have work ready" (off by default) does the same after every scheduled run.
+
 ### Fact extraction (filings)
 
 Filings are read once (marked `extracted`). To keep runs short, extraction works only on deep-band stocks
