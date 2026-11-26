@@ -9,34 +9,24 @@
 <form method="post" action="/pipeline/run" data-inplace="1"><button class="primary">Run pipeline</button></form>
 {% endif %}
 </div>
-<ol class="pipe">
-{% for a in pipe %}
-{% set st = a.last_status %}
-<li class="card stage{{' ready' if a.ready.due}}{{' now' if a.current}}">
-<div class="stagehead"><span class="num">{{a.n_order}}</span><h3><a href="/agents/{{a.id}}" style="color:inherit">{{a.name}}</a></h3>
-{% if st %}<span class="pill {{st|replace(' ', '-')}}">{{st}}</span>{% endif %}</div>
-<p>{{a.description}}</p>
-<div class="readyline {{'due' if a.ready.due else 'idle'}}">{% if a.ready.due %}<strong>Ready to run{% if a.ready.n %}: {{ '{:,}'.format(a.ready.n) }}{% endif %}</strong> · {% else %}Up to date · {% endif %}{{a.ready.why or ''}}</div>
-<div class="meta"><span class="pill {{'on' if a.enabled else 'off'}}">{{'scheduled' if a.enabled else 'paused'}}</span>
-<span>{{a.cadence}} · <code>{{a.schedule}}</code></span>
-{% if st %}<span>{{'started' if st in ('running', 'starting') else 'last run'}} {{(a.last_started if st in ('running', 'starting') else (a.last_finished or a.last_started))|ist}}</span>{% else %}<span>never run</span>{% endif %}
-{% if a.step %}<span class="pill {{a.step.status}}">this pipeline: {{a.step.status}}</span>{% elif a.current %}<span class="pill running">this pipeline: now</span>{% endif %}</div>
-<div class="row">
-<form method="post" action="/agents/{{a.id}}/run" data-inplace="1"><button class="primary" {{'disabled' if st in ('running', 'starting')}}>Run now</button></form>
-<form method="post" action="/pipeline/run" data-inplace="1"><input type="hidden" name="start" value="{{a.id}}"><button title="Run this stage, then the later stages that have work ready" {{'disabled' if pipe_run.status == 'running'}}>Run from here ↓</button></form>
-<form method="post" action="/agents/{{a.id}}/stop" data-inplace="1"><button {{'disabled' if st not in ('running', 'starting')}}>Stop</button></form>
-<form method="post" action="/agents/{{a.id}}/{{'pause' if a.enabled else 'resume'}}" data-inplace="1"><button>{{'Pause schedule' if a.enabled else 'Resume schedule'}}</button></form>
-</div></li>
-{% endfor %}
-</ol>
-{% if pipe_side %}<h3 class="side">Outside the chain</h3>
-<div class="agents">{% for a in pipe_side %}{% set st = a.last_status %}<div class="card agent stage{{' ready' if a.ready.due}}">
-<div class="stagehead"><h3><a href="/agents/{{a.id}}" style="color:inherit">{{a.name}}</a></h3>{% if st %}<span class="pill {{st|replace(' ', '-')}}">{{st}}</span>{% endif %}</div>
-<p>{{a.description}}</p>
-<div class="readyline {{'due' if a.ready.due else 'idle'}}">{% if a.ready.due %}<strong>Ready to run</strong> · {% else %}Up to date · {% endif %}{{a.ready.why or ''}}</div>
-<div class="meta"><span class="pill {{'on' if a.enabled else 'off'}}">{{'scheduled' if a.enabled else 'paused'}}</span><span>{{a.cadence}} · <code>{{a.schedule}}</code></span>
-{% if st %}<span>{{(a.last_finished or a.last_started)|ist}}</span>{% else %}<span>never run</span>{% endif %}</div>
-<div class="row"><form method="post" action="/agents/{{a.id}}/run" data-inplace="1"><button class="primary" {{'disabled' if st in ('running', 'starting')}}>Run now</button></form>
-<form method="post" action="/agents/{{a.id}}/stop" data-inplace="1"><button {{'disabled' if st not in ('running', 'starting')}}>Stop</button></form>
-<form method="post" action="/agents/{{a.id}}/{{'pause' if a.enabled else 'resume'}}" data-inplace="1"><button>{{'Pause schedule' if a.enabled else 'Resume schedule'}}</button></form></div>
-</div>{% endfor %}</div>{% endif %}
+{% macro stage_row(a, num, chain) %}{% set st = a.last_status %}
+<tr class="{{'ready' if a.ready.due}}{{' now' if a.current}}">
+<td class="num">{{num}}</td>
+<td class="nm"><a href="/agents/{{a.id}}" title="{{a.description}}">{{a.name}}</a></td>
+<td>{% if st %}<span class="pill {{st|replace(' ', '-')}}">{{st}}</span>{% else %}<span class="small">never run</span>{% endif %}
+{% if a.step %}<span class="pill {{a.step.status}}" title="{{a.step.why or ''}}">pipeline: {{a.step.status}}</span>{% elif a.current %}<span class="pill running">pipeline: now</span>{% endif %}</td>
+<td class="{{'rd' if a.ready.due else 'idle'}}">{% if a.ready.due %}Ready{% if a.ready.n %}: {{ '{:,}'.format(a.ready.n) }}{% endif %} · {% else %}Up to date · {% endif %}{{a.ready.why or ''}}</td>
+<td class="small nowrap">{% if st in ('running', 'starting') %}started {{a.last_started|ist('%d %b %H:%M')}}{% elif st %}{{(a.last_finished or a.last_started)|ist('%d %b %H:%M')}}{% else %}–{% endif %}</td>
+<td class="small nowrap"><span class="pill {{'on' if a.enabled else 'off'}}" title="{{'scheduled' if a.enabled else 'schedule paused'}}">{{a.cadence}}</span> <code>{{a.schedule}}</code></td>
+<td><div class="row nowrap">
+<form method="post" action="/agents/{{a.id}}/run" data-inplace="1"><button class="ib primary" title="Run this stage now" {{'disabled' if st in ('running', 'starting')}}>Run</button></form>
+{% if chain %}<form method="post" action="/pipeline/run" data-inplace="1"><input type="hidden" name="start" value="{{a.id}}"><button class="ib" title="Run this stage, then the later stages that have work ready" {{'disabled' if pipe_run.status == 'running'}}>From here ↓</button></form>{% endif %}
+<form method="post" action="/agents/{{a.id}}/stop" data-inplace="1"><button class="ib" {{'disabled' if st not in ('running', 'starting')}}>Stop</button></form>
+<form method="post" action="/agents/{{a.id}}/{{'pause' if a.enabled else 'resume'}}" data-inplace="1"><button class="ib" title="{{'Pause the schedule' if a.enabled else 'Resume the schedule'}}">{{'Pause' if a.enabled else 'Resume'}}</button></form>
+</div></td></tr>{% endmacro %}
+<div class="tablewrap"><table class="pipetable">
+<tr><th>#</th><th>Stage</th><th>Last run</th><th>What is waiting</th><th>When (IST)</th><th>Schedule</th><th></th></tr>
+{% for a in pipe %}{{ stage_row(a, a.n_order, True) }}{% endfor %}
+{% if pipe_side %}<tr class="sep"><td colspan="7">Outside the chain</td></tr>{% for a in pipe_side %}{{ stage_row(a, '–', False) }}{% endfor %}{% endif %}
+</table></div>
+<p class="small" style="margin:6px 0 0">Hover a stage name for what it does; click it for its runs and logs.</p>

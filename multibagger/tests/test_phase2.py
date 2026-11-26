@@ -151,7 +151,7 @@ def test_portal_phase2(env, monkeypatch):
     store, _ = env
     c = TestClient(app)
     home = c.get("/").text
-    assert home.count("Resume schedule") == 5  # the five phase 2 agents ship paused
+    assert home.count("Resume the schedule") == 5  # the five phase 2 agents ship paused
     assert c.get("/research").status_code == 200 and c.get("/research/NOPE").status_code == 404
     assert "Claude subscription" in c.get("/settings").text
     r = c.post("/settings", data={"provider": "vertex", "model": "claude-sonnet-5-5", "effort": "low",

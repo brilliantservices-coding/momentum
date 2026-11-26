@@ -183,7 +183,7 @@ def test_portal_pages(env, monkeypatch):
     assert "Waiting to load: 1" in c.get("/data").text
     c.post("/agents/screener/pause")
     assert store.get("agents", "screener")["enabled"] is False
-    assert "Resume schedule" in c.get("/").text
+    assert "Resume the schedule" in c.get("/").text
     c.post("/kill", data={"action": "kill"})
     assert "Kill switch is on" in c.get("/").text
     assert "Kill switch is on" in c.post("/agents/ingestion/run").text
