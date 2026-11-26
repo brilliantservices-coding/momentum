@@ -173,7 +173,10 @@ the funnel is their landing page, every page and run state is visible, and butto
 "Sorry, you are not authorized to run the stage." The server refuses every non-GET request from a viewer
 (403), so the API cannot be used to get round the page. `VIEWER_EMAILS=*` lets in any Google account that
 passes sign-in (deploy.sh then grants IAP access to allAuthenticatedUsers; the OAuth consent screen must be
-published, or each viewer added as a test user).
+published, or each viewer added as a test user). Open sign-up is capped: the first 40 accounts (`MB_VIEWER_CAP`,
+or the limit on the Viewers page) are recorded in `viewers/` with first and last visit; later ones see "this
+portal has reached its limit of viewers". On the Viewers page (owners only) Block stops an account for good and
+frees its place; Remove deletes the record so the account may sign up again. Named accounts don't count.
 
 ### Stage pipeline (overview page)
 

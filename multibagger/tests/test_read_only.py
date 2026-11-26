@@ -57,7 +57,7 @@ def test_viewer_cannot_post_anything(portal):
     posts = [r.path for r in pa.app.routes if isinstance(r, APIRoute) and "POST" in r.methods
              and r.path not in pa.OPEN_PATHS]
     assert len(posts) >= 12
-    fill = {"agent_id": "screener", "action": "run", "alert_id": "x", "pid": "x", "symbol": "ALPHA"}
+    fill = {"agent_id": "screener", "action": "run", "alert_id": "x", "pid": "x", "symbol": "ALPHA", "email": "a@x.com"}
     for path in posts:
         url = path.format(**fill)
         r = v.post(url, data={"action": "kill", "provider": "subscription", "effort": "low", "daily_cap_usd": 50})
@@ -69,3 +69,38 @@ def test_viewer_cannot_post_anything(portal):
     assert not started and not (pa.get_store().get("control", "global") or {}).get("killed")
     r = client(ADMIN).post("/agents/screener/run", headers={"X-Requested-With": "fetch"})
     assert r.json()["ok"] and started
+
+
+def test_open_signup_cap_and_block(env, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    import portal.app as pa
+    monkeypatch.setattr(pa, "settings", dataclasses.replace(
+        pa.settings, allowed_users=(ADMIN, "shreyasbforu@gmail.com"), admin_users=(ADMIN,), viewer_users=("*",)))
+    store = pa.get_store()
+    store.set("control", "viewers", {"cap": 2})
+
+    def get(email, path="/"):
+        return TestClient(pa.app, headers={"x-goog-authenticated-user-email": f"accounts.google.com:{email}"}).get(path)
+    assert get("a@x.com").status_code == 200 and get("b@x.com").status_code == 200
+    assert get("shreyasbforu@gmail.com").status_code == 200  # named: not counted
+    full = get("c@x.com")
+    assert full.status_code == 403 and "limit of viewers" in full.text
+    assert get("a@x.com").status_code == 200  # already in: still fine
+    assert store.get("viewers", "a@x.com")["first_seen"] and store.get("viewers", "shreyasbforu@gmail.com")["named"]
+    assert get("a@x.com", "/viewers").status_code == 403  # viewers can't see the list
+    admin = TestClient(pa.app, headers={"x-goog-authenticated-user-email": f"accounts.google.com:{ADMIN}"})
+    page = admin.get("/viewers").text
+    assert "a@x.com" in page and "2 of 2" in page
+    admin.post("/viewers/a@x.com/block")
+    blocked = get("a@x.com")
+    assert blocked.status_code == 403 and "removed" in blocked.text
+    assert get("c@x.com").status_code == 200  # blocking frees the place
+    assert get("d@x.com").status_code == 403
+    admin.post("/viewers/b@x.com/remove")
+    assert get("d@x.com").status_code == 200  # so does removing
+    assert get("a@x.com").status_code == 403  # still blocked
+    admin.post("/viewers/a@x.com/unblock")
+    assert get("a@x.com").status_code == 200
+    v = TestClient(pa.app, headers={"x-goog-authenticated-user-email": "accounts.google.com:c@x.com"})
+    assert v.post("/viewers/a@x.com/block").status_code == 403 and v.post("/viewers/cap", data={"cap": 99}).status_code == 403

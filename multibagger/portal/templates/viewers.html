@@ -1,0 +1,16 @@
+{% extends "base.html" %}{% block body %}
+<h1>Viewers</h1><p class="sub">People who opened the read-only portal. Only the portal's owners see this page.</p>
+<div class="card" style="margin-bottom:14px">
+{% if open_signup %}<p style="margin-top:0">Any Google account can sign up as a viewer until <strong>{{active}} of {{cap}}</strong> places are taken. After that, new accounts see "this portal has reached its limit of viewers".</p>
+{% else %}<p style="margin-top:0">Sign-up is closed: only the accounts named in the deploy config can view. ({{active}} recorded.)</p>{% endif %}
+<form method="post" action="/viewers/cap" class="row" style="align-items:center">Viewer limit <input type="number" name="cap" min="0" max="1000" value="{{cap}}" style="width:6em"> <button>Save</button></form>
+<p class="small" style="margin-bottom:0"><strong>Block</strong> stops an account from opening the portal from now on and frees its place. <strong>Remove</strong> deletes the record and frees the place, but the account can sign up again while there is room. Accounts named in the config ("named") don't count against the limit.</p></div>
+{% if rows %}<div class="tablewrap"><table><tr><th>Account</th><th>Status</th><th>First seen (IST)</th><th>Last seen (IST)</th><th class="num">Visits</th><th></th></tr>
+{% for v in rows %}<tr><td>{{v.email or v.id}}{% if v.named %} <span class="pill">named</span>{% endif %}</td>
+<td><span class="pill {{'failed' if v.status == 'blocked' else 'succeeded'}}">{{v.status or 'active'}}</span></td>
+<td>{{v.first_seen|ist('%d %b %Y %H:%M')}}</td><td>{{v.last_seen|ist('%d %b %Y %H:%M')}}</td><td class="num">{{v.visits or 0}}</td>
+<td><div class="row nowrap">{% if v.status == 'blocked' %}<form method="post" action="/viewers/{{v.id}}/unblock"><button>Unblock</button></form>
+{% else %}<form method="post" action="/viewers/{{v.id}}/block"><button class="danger">Block</button></form>{% endif %}
+<form method="post" action="/viewers/{{v.id}}/remove"><button>Remove</button></form></div></td></tr>{% endfor %}</table></div>
+{% else %}<div class="card empty">Nobody has signed in as a viewer yet.</div>{% endif %}
+{% endblock %}
